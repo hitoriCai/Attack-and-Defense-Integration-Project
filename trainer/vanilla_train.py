@@ -10,7 +10,7 @@ sys.path.append("..")
 from dataset import ImageNetLoader
 from models import resnet50, NormalizeByChannelMeanStd, ProcessedModel
 
-def train(model, dataloader, criterion, optimizer, num_epochs=10):
+def train(model, dataloader, criterion, optimizer, num_epochs=3):
     model.train()  # 设置模型为训练模式
     for epoch in range(num_epochs):
         running_loss = 0.0

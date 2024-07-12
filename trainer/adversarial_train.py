@@ -17,7 +17,7 @@ def fgsm_attack(image, epsilon, data_grad):
     perturbed_image = torch.clamp(perturbed_image, 0, 1)
     return perturbed_image
 
-def pgd_attack(model, images, labels, device, epsilon, alpha, iters=40):
+def pgd_attack(model, images, labels, device, epsilon, alpha, iters=3):
     # 初始化扰动
     perturbed_images = images + torch.randn_like(images) * epsilon
     perturbed_images = torch.clamp(perturbed_images, 0, 1)
@@ -50,7 +50,7 @@ def train(model, device, train_loader, optimizer, epoch, epsilon, attack_type='f
             loss.backward()
             data = fgsm_attack(data_grad, epsilon, data_grad.grad.data)
         elif attack_type == 'pgd':
-            data = pgd_attack(model, data, target, device, epsilon, alpha=epsilon/10, iters=40)
+            data = pgd_attack(model, data, target, device, epsilon, alpha=epsilon/10, iters=3)
 
         optimizer.zero_grad()
         output = model(data)
