@@ -221,7 +221,7 @@ class Attack(object):
             dropout_training (bool): True for using training mode for dropouts during attack process.
 
         .. note::
-            For RNN-based models, we cannot calculate gradients with eval mode.
+            For RNN-based modelss, we cannot calculate gradients with eval mode.
             Thus, it should be changed to the training mode during the attack.
         """
         self._model_training = model_training
