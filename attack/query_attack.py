@@ -4,11 +4,15 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 import math
+import time
+import numpy as np
+import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from attack.base_attacker import Attack
 
-from QueryNet.surrogate import *
-import prettytable as pt
+from .query.surrogate import *
+# import prettytable as pt
 
 
 
@@ -467,7 +471,7 @@ class Square(Attack):
 
         return adv
 
-
+'''
 # QueryAttack ##########################################################
 def pseudo_gaussian_pert_rectangles(x, y):
     delta = np.zeros([x, y])
@@ -933,6 +937,6 @@ class PGDGenerator2():
         else:
             return adv
 
-
+'''
 
 
