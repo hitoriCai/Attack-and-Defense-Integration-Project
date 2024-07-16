@@ -51,13 +51,13 @@ attack = attack.PGDL2(net, eps=1.0, alpha=0.2, steps=10, random_start=True)
 
 #### 3.1.1 ce
 
-**Linf**		
+**Linf**		Accuracy on attacked test images: **0.27%**
 
 ```python
 attack = attack.APGD(net, norm='Linf', eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
 ```
 
-**L2**		
+**L2**		Accuracy on attacked test images: **32.23%**
 
 ```python
 attack = attack.APGD(net, norm='L2', eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
@@ -73,28 +73,30 @@ attack = attack.APGD(net, norm='L2', eps=8/255, steps=10, n_restarts=1, seed=0, 
 attack = attack.APGD(net, norm='Linf', eps=8/255, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False)
 ```
 
-**L2**		
+**L2**		Accuracy on attacked test images: **32.23%**
 
 ```python
-attack = attack.APGD(net, norm='L2', eps=8/255, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False)
+attack = attack.APGD(net, norm='L2', eps=3.0, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False)
 ```
 
 
 
 ### 3.2 APGDT
 
+(貌似因为一个 iter 后, 显存没有正确释放, 所以跑到一半炸了, 这个问题先放着)
+
 #### 3.2.1 ce
 
 **Linf**		
 
 ```python
-attack = attack.APGDT(net, norm='Linf', eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False, n_classes=10)
+attack = attack.APGDT(net, norm='Linf', eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False, n_classes=1000)
 ```
 
 **L2**		
 
 ```python
-attack = attack.APGDT(net, norm='L2', eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False, n_classes=10)
+attack = attack.APGDT(net, norm='L2', eps=3.0, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False, n_classes=1000)
 ```
 
 
@@ -110,12 +112,18 @@ attack = attack.APGDT(net, norm='Linf', eps=8/255, steps=10, n_restarts=1, seed=
 **L2**		
 
 ```python
-attack = attack.APGDT(net, norm='L2', eps=8/255, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False, n_classes=10)
+attack = attack.APGDT(net, norm='L2', eps=3.0, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False, n_classes=1000)
 ```
 
 
 
 ## 4. Square
+
+Accuracy on attacked test images: **23.76%**
+
+```python
+attack = attack.Square(net, norm='Linf', eps=8 / 255, n_queries=100, n_restarts=1, p_init=.8, seed=0, verbose=False, targeted=False, loss='margin', resc_schedule=True)
+```
 
 
 
@@ -126,6 +134,27 @@ attack = attack.APGDT(net, norm='L2', eps=8/255, steps=10, n_restarts=1, seed=0,
 
 
 ## 5. Query
+
+用 `querynet.py` 跑, 单独的, 用的默认参数见下
+
+
+
+```python
+# imagenet
+assert (not args.use_nas), 'NAS is not supported for ImageNet for resource concerns'
+if not ((args.l2_attack and args.eps == 5) or (not args.l2_attack and args.eps == 12.75)):
+    print('Warning: not using default eps in the paper, which is l2=5 or linfty=12.75 for ImageNet.')
+batch_size = 100 if model_name != 'resnext101_32x8d' else 32
+model = VictimImagenet(model_name, batch_size=batch_size) if model_name != 'easydlmnist' else VictimEasydl(arch='easydlmnist')
+x_test, y_test = load_imagenet(args.num_x, model)
+
+logits_clean = model(x_test)
+corr_classified = logits_clean.argmax(1) == y_test.argmax(1)
+print('Clean accuracy: {:.2%}'.format(np.mean(corr_classified)) + ' ' * 40)
+y_test = dense_to_onehot(y_test.argmax(1), n_cls=10 if dataset != 'imagenet' else 1000)
+for run_time in range(args.run_times):
+    attack(model, x_test[corr_classified], y_test[corr_classified], logits_clean[corr_classified], dataset, batch_size, run_time, args, log)
+```
 
 
 

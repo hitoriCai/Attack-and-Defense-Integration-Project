@@ -1,4 +1,4 @@
-import utils
+from .utils import *
 import torch
 from torch import nn
 import torchvision
@@ -7,6 +7,8 @@ import math
 import ssl
 ssl._create_default_https_context = ssl._create_unverified_context
 
+import sys
+sys.path.append("..")
 from models import make_model
 device = torch.device('cuda')
 
@@ -20,7 +22,7 @@ def get_margin_loss(y, logits, targeted=False, loss_type='margin_loss'):
         margin = diff.min(1, keepdims=True)
         loss = margin * -1 if targeted else margin
     elif loss_type == 'cross_entropy':
-        probs = utils.softmax(logits)
+        probs = softmax(logits)
         loss = -np.log(probs[y])
         loss = loss * -1 if not targeted else loss
     else:

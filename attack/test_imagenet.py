@@ -35,6 +35,7 @@ def test(model, testloader, attack=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
     parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
+    # parser.add_argument('--num_epoch', default=200, type=float, help='learning rate')
     parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
     args = parser.parse_args()
 
@@ -45,6 +46,7 @@ if __name__ == '__main__':
 
     # 指定ImageNet数据集的本地路径
     data_dir = '/opt/data/common/ILSVRC2012'
+    # data_dir = '/home/datasets/ILSVRC2012'
     # Data
     print('==> Preparing data..')
     transform_train = transforms.Compose([
@@ -76,10 +78,8 @@ if __name__ == '__main__':
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
     ])
-
-    if device == 'cuda':
-        net = torch.nn.DataParallel(net)
-        cudnn.benchmark = True
+    net = torch.nn.DataParallel(net)
+    cudnn.benchmark = True
     if args.resume:
         # Load checkpoint.
         print('==> Resuming from checkpoint..')
@@ -99,18 +99,25 @@ if __name__ == '__main__':
     # 用autoPGD-ce/dlr攻击：
     # ce:
     # attack = attack.APGD(net, norm='Linf', eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
-    # attack = attack.APGD(net, norm='L2', eps=3.0, steps=100, n_restarts=5, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
-
+    # attack = attack.APGD(net, norm='L2', eps=3.0, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
     # dlr:
     # attack = attack.APGD(net, norm='Linf', eps=8/255, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False)
-    attack = attack.APGD(net, norm='L2', eps=3.0, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False)
+    # attack = attack.APGD(net, norm='L2', eps=3.0, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False)
 
     # 用autoPGD-taegeted-ce/dlr攻击：
+    # ce:
+    # attack = attack.APGDT(net, norm='Linf', eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False, n_classes=1000)
+    # attack = attack.APGDT(net, norm='L2', eps=3.0, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False, n_classes=1000)
+    # dlr:
     # attack = attack.APGDT(net, norm='Linf', eps=8/255, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False, n_classes=1000)
+    # attack = attack.APGDT(net, norm='L2', eps=3.0, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False, n_classes=1000)
 
     # 用SquareAttack攻击： 这里本来torchattack的示例是 n_queries=5000, 但跑着太慢了所以改成了100, 不知道该用什么参数
-    # attack = attack.Square(net, norm='Linf', eps=8 / 255, n_queries=100, n_restarts=1, p_init=.8, seed=0, verbose=False,
-    #                        targeted=False, loss='margin', resc_schedule=True)
+    attack = attack.Square(net, norm='Linf', eps=8 / 255, n_queries=5000, n_restarts=1, p_init=.8, seed=0, verbose=False,
+                           targeted=False, loss='margin', resc_schedule=True)
+
+    # 用QueryAttack攻击：（见querynet.py）
+
 
 
 
@@ -119,6 +126,7 @@ if __name__ == '__main__':
     # print(f'Accuracy on clean test images: {clean_accuracy:.2f}%')
 
     # 测试模型在攻击后的测试集上的准确度
+    # for s in range(num_epoch)
     attack_accuracy = test(net, testloader, attack=attack)
     print(f'Accuracy on attacked test images: {attack_accuracy:.2f}%')
 

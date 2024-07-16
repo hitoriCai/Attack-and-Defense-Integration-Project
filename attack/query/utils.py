@@ -199,13 +199,14 @@ def softmax(x):
 
 
 paths = {
-    'CDataC': 'data/cifar10-test.npy',
-    'CGTC':   'data/cifar10-test-GroundTruth.npy',
-    'CDataM': 'data/mnist-test.npy',
-    'CGTM':   'data/mnist-test-GroundTruth.npy',
+    # 'CDataC': 'data/cifar10-test.npy',
+    # 'CGTC':   'data/cifar10-test-GroundTruth.npy',
+    # 'CDataM': 'data/mnist-test.npy',
+    # 'CGTM':   'data/mnist-test-GroundTruth.npy',
     #'CDataI': 'data/imagenet-val.npy',
     #'CGTI':   'data/imagenet-val-GroundTruth.npy',
-    'CDataI': 'data/ILSVRC2012_img_val',
+    'CDataI': '/home/datasets/ILSVRC2012/val',
+    # 'CDataI': '/opt/data/common/ILSVRC2012',
     'CGTI':   'data/val.txt'
 }
 
@@ -224,52 +225,41 @@ def preprocess_data(dataset):
     np.save('data/%s-test-GroundTruth.npy' % dataset, label)
 
 
-def load_mnist(n_ex):
-    data_path = paths['CDataM']
-    ground_truth_path = paths['CGTM']
-    if not os.path.exists(data_path) or not os.path.exists(ground_truth_path): preprocess_data('mnist')
-    x_test, y_test = np.load(data_path), np.load(ground_truth_path)
-    x_test = x_test.astype(np.float32) / 255.0
-    return x_test[:n_ex, np.newaxis, :, :], y_test[:n_ex].astype(np.float32)
-
-
-def load_cifar10(n_ex):
-    data_path = paths['CDataC']
-    ground_truth_path = paths['CGTC']
-    if not os.path.exists(data_path) or not os.path.exists(ground_truth_path): preprocess_data('cifar10')
-    x_test, y_test = np.load(data_path), np.load(ground_truth_path)
-    x_test = np.transpose(x_test.astype(np.float32), axes=[0, 3, 1, 2]) / 255.0
-    return x_test[:n_ex], y_test[:n_ex]
-
-
 def load_imagenet(n_ex, model):
-    with open(paths['CGTI'], 'r') as f: txt = f.read().split('\n')
+    current_dir = os.path.dirname(os.path.abspath(__file__))  ## 怎么只有这样写路径才对啊。。。
+    data_dir = os.path.join(current_dir, 'data')
+    val_file_path = os.path.join(data_dir, 'val.txt')
+    with open(val_file_path, 'r') as f: txt = f.read().split('\n')
+    # with open(paths['CGTI'], 'r') as f: txt = f.read().split('\n')
     labels = {}
     for item in txt:
         if ' ' not in item: continue
         file, cls = item.split(' ')
-        labels[file] = int(cls)
+        labels[file] = int(cls)     # file 是图片的名字
     
     data = []
-    files = os.listdir(paths['CDataI'])
+    folders = os.listdir(paths['CDataI'])
     label = np.zeros((min([1000, n_ex]), 1000), dtype=np.uint8)
     label_done = []
     random.seed(0)
     
-    for i in random.sample(range(len(files)), len(files)):
-        file = files[i]
-        lbl = labels[file]
-        if lbl in label_done: continue
-        
-        img = np.array(PIL.Image.open(
-            paths['CDataI'] + '/' + file).convert('RGB').resize((224, 224))) \
-            .astype(np.float32).transpose((2, 0, 1)) / 255
-        prd = model(torch.tensor(img[np.newaxis, ...])).argmax(1)
-        if prd != lbl: continue
-        
-        label[len(data), lbl] = 1
-        data.append(img)
-        label_done.append(lbl)
+    for i in random.sample(range(len(folders)), len(folders)):
+        folder = folders[i]
+        files = os.listdir(paths['CDataI'] + '/' + folder)
+        for j in range(len(files)):
+            file = files[j]
+            lbl = labels[file]
+            if lbl in label_done: continue
+
+            img = np.array(PIL.Image.open(
+                paths['CDataI'] + '/' + folder + '/' + file).convert('RGB').resize((224, 224))) \
+                .astype(np.float32).transpose((2, 0, 1)) / 255
+            prd = model(torch.tensor(img[np.newaxis, ...])).argmax(1)
+            if prd != lbl: continue
+
+            label[len(data), lbl] = 1
+            data.append(img)
+            label_done.append(lbl)
         print('selecting samples in different classes...', len(label_done), '/',1000, end='\r')
         if len(label_done) == min([1000, n_ex]): break
     data = np.array(data)

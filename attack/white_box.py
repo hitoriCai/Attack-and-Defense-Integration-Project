@@ -4,7 +4,7 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
-from .base_attacker import Attack
+from base_attacker import Attack
 
 # FGSM (Linf) #################################################################
 class FGSM(Attack):
