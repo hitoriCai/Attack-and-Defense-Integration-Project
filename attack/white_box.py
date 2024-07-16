@@ -47,7 +47,7 @@ class FGSM(Attack):
         grad = torch.autograd.grad(
             cost, images, retain_graph=False, create_graph=False
         )[0]
-        adv_images = images + self.eps * grad.sign()
+        adv_images = images.data + self.eps * grad.data.sign()
         adv_images = torch.clamp(adv_images, min=0, max=1).detach()
         return adv_images
 
@@ -110,7 +110,8 @@ class PGD(Attack):
             grad = torch.autograd.grad(
                 cost, adv_images, retain_graph=False, create_graph=False
             )[0]
-            adv_images = adv_images.detach() + self.alpha * grad.sign()
+            adv_images = adv_images.detach() + self.alpha * grad.data.sign()
+            adv_images.grad = None
             delta = torch.clamp(adv_images - images, min=-self.eps, max=self.eps)
             adv_images = torch.clamp(images + delta, min=0, max=1).detach()
         return adv_images
