@@ -122,7 +122,7 @@ attack = attack.APGDT(net, norm='L2', eps=3.0, steps=10, n_restarts=1, seed=0, l
 Accuracy on attacked test images: **23.76%**
 
 ```python
-attack = attack.Square(net, norm='Linf', eps=8 / 255, n_queries=100, n_restarts=1, p_init=.8, seed=0, verbose=False, targeted=False, loss='margin', resc_schedule=True)
+attack = attack.Square(net, norm='Linf', eps= 8/225, n_queries=100, n_restarts=1, p_init=.8, seed=0, verbose=False, targeted=False, loss='margin', resc_schedule=True)
 ```
 
 
@@ -137,7 +137,7 @@ attack = attack.Square(net, norm='Linf', eps=8 / 255, n_queries=100, n_restarts=
 
 用 `querynet.py` 跑, 单独的, 用的默认参数见下
 
-
+![image-20240716164803875](D:\SJTU_research\Attack-and-Defense-Integration-Project\attack\assets\image-20240716164803875.png)
 
 ```python
 # imagenet
@@ -156,7 +156,12 @@ for run_time in range(args.run_times):
     attack(model, x_test[corr_classified], y_test[corr_classified], logits_clean[corr_classified], dataset, batch_size, run_time, args, log)
 ```
 
+在第 7235 轮之后, 达到 0 正确率
 
+```shell
+7234: Acc=0.10%, AQ_suc=45.95, MQ_suc=7.0, AQ_all=53.14, MQ_all=7.0, ALoss_all=-1.82, |D|=2000, Time=459.5s
+7235: Acc=0.00%, AQ_suc=53.14, MQ_suc=7.0, AQ_all=53.14, MQ_all=7.0, ALoss_all=-1.82, |D|=2000, Time=459.6s
+```
 
 
 

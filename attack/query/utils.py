@@ -205,8 +205,8 @@ paths = {
     # 'CGTM':   'data/mnist-test-GroundTruth.npy',
     #'CDataI': 'data/imagenet-val.npy',
     #'CGTI':   'data/imagenet-val-GroundTruth.npy',
-    'CDataI': '/home/datasets/ILSVRC2012/val',
-    # 'CDataI': '/opt/data/common/ILSVRC2012',
+    # 'CDataI': '/home/datasets/ILSVRC2012/val',
+    'CDataI': '/opt/data/common/ILSVRC2012/val',
     'CGTI':   'data/val.txt'
 }
 
