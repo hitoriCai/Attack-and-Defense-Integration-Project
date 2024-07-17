@@ -6,6 +6,9 @@ import torch.optim as optim
 import os
 from dataset import ImageNetLoader
 from models import resnet50, NormalizeByChannelMeanStd, ProcessedModel
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
 
 def train(model, device, dataloader, criterion, optimizer):
     model.train()
