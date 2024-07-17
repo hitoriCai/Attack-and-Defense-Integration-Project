@@ -53,7 +53,7 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Training on {device}')
 
-    data_dir = 'path/to/your/imagenet/data'
+    data_dir = ''
     train_loader = ImageNetLoader(data_dir, batch_size=32, train=True).load_data()
     test_loader = ImageNetLoader(data_dir, batch_size=32, train=False).load_data()
 
