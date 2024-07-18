@@ -6,6 +6,7 @@ import torch.optim as optim
 from dataset import ImageNetLoader
 from models import resnet18, NormalizeByChannelMeanStd, ProcessedModel
 from torch.optim.lr_scheduler import CosineAnnealingLR
+import os
 from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -99,7 +100,9 @@ def main():
         test_loss, test_acc = test(model, device, test_loader, criterion)
         print(f'Epoch {epoch+1}, Test Loss: {test_loss:.4f}, Test Accuracy: {test_acc:.2f}%')
         
-        torch.save(model.module.state_dict(), f'model_epoch_{epoch+1}.pth')  # Save the unwrapped model
+        model_path = '/opt/data/private/trained_model/vanilla_train/'
+        torch.save(model.module.state_dict(), os.path.join(model_path, f'model_epoch_{epoch+1}.pth'))
+
 
 if __name__ == '__main__':
     main()

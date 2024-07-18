@@ -7,6 +7,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from dataset import ImageNetLoader
 from models import resnet18, NormalizeByChannelMeanStd, ProcessedModel
 from attack import white_box
+import os
 from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -17,8 +18,13 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, eps, warmup=
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
 
+        #FGSM
         fgsm = white_box.FGSM(model, eps=eps)
         perturbed_data = fgsm(data, target)
+
+        # #使用PGD
+        # fgsm = white_box.PGD(resnet18, eps=eps, alpha=1 / 255, steps=10, random_start=True)  # Linf
+        # perturbed_data = fgsm(data, target)
 
         # Zero out the gradients
         optimizer.zero_grad()
@@ -43,12 +49,32 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, eps, warmup=
         if warmup and epoch > 1:
             scheduler.step()
 
+def test(model, device, dataloader, criterion):
+    model.eval()
+    test_loss = 0
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for data, target in dataloader:
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+            test_loss += criterion(output, target).item()  # Sum up batch loss
+            pred = output.argmax(dim=1, keepdim=True)  # Get the index of the max log-probability
+            correct += pred.eq(target.view_as(pred)).sum().item()
+            total += target.size(0)
+
+    test_loss /= len(dataloader.dataset)
+    accuracy = 100. * correct / total
+    print(f'Test set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{total} ({accuracy:.0f}%)')
+
+
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f'Training on {device}')
 
     data_dir = '/data0/mxy/imagenet/ILSVRC2012'
     train_loader = ImageNetLoader(data_dir, batch_size=128, train=True).load_data()
+    test_loader = ImageNetLoader(data_dir, batch_size=128, train=False).load_data()  # Assuming a similar function for test data
 
     model = ProcessedModel(resnet18, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
     if torch.cuda.device_count() > 1:
@@ -57,13 +83,15 @@ def main():
     model = model.to(device)
 
     optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
-    num_epochs = 10
-    epsilon = 8 / 255  # Adversarial strength
-    scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs-1, eta_min=0)
+    criterion = nn.CrossEntropyLoss()
+    scheduler = CosineAnnealingLR(optimizer, T_max=10, eta_min=0)
 
-    for epoch in range(1, num_epochs + 1):
-        warmup = True if epoch <= 2 else False  # Warm-up for the first 2 epochs
-        train(model, device, train_loader, optimizer, scheduler, epoch, epsilon, warmup)
+    for epoch in range(1, 11):  # Update the number of epochs here if needed
+        train(model, device, train_loader, optimizer, scheduler, epoch, 8 / 255)  # EPSILON defined earlier
+        test(model, device, test_loader, criterion)
+
+        model_path = '/opt/data/private/Attack-and-Defense-Integration-Project/trainer/'
+        torch.save(model.module.state_dict(), os.path.join(model_path, f'model_epoch_{epoch}.pth'))
 
 if __name__ == '__main__':
     main()

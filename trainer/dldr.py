@@ -1,62 +1,35 @@
 # 实现低维训练，包括对抗训练与普通训练
-
 import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torchvision import transforms, datasets
-from torch.utils.data import DataLoader
-from models import resnet50, NormalizeByChannelMeanStd, ProcessedModel
+from torchvision import transforms
+from dataset import ImageNetLoader
+from models import resnet18, NormalizeByChannelMeanStd, ProcessedModel
 import numpy as np
 from sklearn.decomposition import PCA
-from torch.autograd import Variable
+from PIL import ImageFile
+from torch.optim.lr_scheduler import CosineAnnealingLR
+import os
 
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-def sub_at_attack(model, images, labels, epsilon, n_components=5):
-    """
-    Subspace Adversarial Training attack using PCA to find the main directions.
-    
-    Args:
-        model (torch.nn.Module): The neural network model.
-        images (torch.Tensor): Batch of images.
-        labels (torch.Tensor): Batch of labels.
-        epsilon (float): Maximum perturbation.
-        n_components (int): Number of principal components for PCA.
-
-    Returns:
-        torch.Tensor: Adversarial examples.
-    """
+def sub_AT_attack(model, images, labels, epsilon, n_components=5):
     model.eval()
     images = images.detach().cpu().numpy()
-    
-    # Flatten images to 2D for PCA
     orig_shape = images.shape
     images_flat = images.reshape(images.shape[0], -1)
-    
-    # Apply PCA
     pca = PCA(n_components=n_components)
     pca.fit(images_flat)
-    
-    # Project the images onto the principal components
     images_pca = pca.transform(images_flat)
-    
-    # Add perturbations along the principal components
     perturbations = epsilon * np.sign(images_pca)
     perturbed_images_pca = images_pca + perturbations
-    
-    # Transform back to the original space
     perturbed_images_flat = pca.inverse_transform(perturbed_images_pca)
     perturbed_images = perturbed_images_flat.reshape(orig_shape)
-    
-    # Clip to ensure the images are valid
     perturbed_images = np.clip(perturbed_images, 0, 1)
-    
-    # Convert back to tensor and copy to the same device as the model
     perturbed_images_tensor = torch.tensor(perturbed_images).float().to(images.device)
-    
     model.train()
     return perturbed_images_tensor
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Low Dimensional Training with Normal and Adversarial Training')
@@ -69,7 +42,6 @@ def parse_args():
     return parser.parse_args()
 
 def train_normal(model, device, dataloader, criterion, optimizer):
-    """Regular training process"""
     model.train()
     total_loss, correct, total = 0, 0, 0
     for images, labels in dataloader:
@@ -79,49 +51,64 @@ def train_normal(model, device, dataloader, criterion, optimizer):
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
-
         total_loss += loss.item()
         _, predicted = outputs.max(1)
         correct += predicted.eq(labels).sum().item()
         total += labels.size(0)
-
     print(f"Normal Training: Loss: {total_loss / len(dataloader)}, Accuracy: {correct / total:.2f}")
 
-def train_sub_at(model, device, dataloader, criterion, optimizer, epsilon):
-    """Subspace Adversarial Training process"""
+def train_sub_AT(model, device, dataloader, criterion, optimizer, epsilon):
     model.train()
     total_loss, correct, total = 0, 0, 0
     for images, labels in dataloader:
         images, labels = images.to(device), labels.to(device)
         optimizer.zero_grad()
-        adv_images = sub_at_attack(model, images, labels, epsilon)
+        adv_images = sub_AT_attack(model, images, labels, epsilon)
         outputs = model(adv_images)
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
-
         total_loss += loss.item()
         _, predicted = outputs.max(1)
         correct += predicted.eq(labels).sum().item()
         total += labels.size(0)
-
     print(f"Adversarial Training: Loss: {total_loss / len(dataloader)}, Accuracy: {correct / total:.2f}")
 
 def main():
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = get_model().to(device)
+    print(f"Training on {device}")
+    
+    data_dir = '/data0/mxy/imagenet/ILSVRC2012'
+    train_loader = ImageNetLoader(data_dir, batch_size=128, train=True).load_data()
+
+
+    model = ProcessedModel(resnet18, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs!")
+        model = nn.DataParallel(model)
+    model = model.to(device)
+    
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     criterion = nn.CrossEntropyLoss()
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0.0001)
 
-    transform = transforms.Compose([transforms.ToTensor()])
-    train_dataset = datasets.CIFAR10(root=args.data_root, train=True, download=True, transform=transform)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-
+    # Warm-up phase
+    warmup_epochs = 3
     for epoch in range(args.epochs):
+        if epoch < warmup_epochs:
+            lr_scale = (epoch + 1) / warmup_epochs
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr_scale * args.lr
+
         print(f"Epoch {epoch+1}")
         train_normal(model, device, train_loader, criterion, optimizer)
-        train_sub_at(model, device, train_loader, criterion, optimizer, args.epsilon)
+        # train_sub_AT(model, device, train_loader, criterion, optimizer, args.epsilon)
+        scheduler.step()
+
+        model_path = '/path/to/save/models/'
+        torch.save(model.module.state_dict(), os.path.join(model_path, f'model_epoch_{epoch+1}.pth'))
 
 if __name__ == "__main__":
     main()
+
