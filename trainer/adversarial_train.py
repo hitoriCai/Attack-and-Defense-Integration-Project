@@ -1,10 +1,134 @@
 # 实现fgsm对抗训练与pgd对抗训练，二者的区别在于迭代次数、步长、初始化等
 
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from dataset import ImageNetLoader
+from models import resnet18, NormalizeByChannelMeanStd, ProcessedModel
+from attack import white_box
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+def train(model, device, train_loader, optimizer, scheduler, epoch, eps, warmup=False):
+    model.train()
+    correct = 0
+    total = 0
+    for batch_idx, (data, target) in enumerate(train_loader):
+        data, target = data.to(device), target.to(device)
+
+        fgsm = white_box.FGSM(model, eps=eps)
+        perturbed_data = fgsm(data, target)
+
+        # Zero out the gradients
+        optimizer.zero_grad()
+        # Train using adversarial examples
+        output = model(perturbed_data)
+        loss = nn.CrossEntropyLoss()(output, target)
+        loss.backward()
+        optimizer.step()
+
+        # Calculate accuracy
+        pred = output.argmax(dim=1, keepdim=True)
+        correct += pred.eq(target.view_as(pred)).sum().item()
+        total += target.size(0)
+
+        if batch_idx % 100 == 0:
+            accuracy = 100. * correct / total
+            print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} ({100. * batch_idx / len(train_loader):.0f}%)] Loss: {loss.item():.6f}, Accuracy: {accuracy:.2f}%')
+            correct = 0
+            total = 0  # Reset for the next 100 batches
+
+        # Update scheduler only after warmup
+        if warmup and epoch > 1:
+            scheduler.step()
+
+def main():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f'Training on {device}')
+
+    data_dir = '/data0/mxy/imagenet/ILSVRC2012'
+    train_loader = ImageNetLoader(data_dir, batch_size=128, train=True).load_data()
+
+    model = ProcessedModel(resnet18, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs!")
+        model = nn.DataParallel(model)
+    model = model.to(device)
+
+    optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+    num_epochs = 10
+    epsilon = 8 / 255  # Adversarial strength
+    scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs-1, eta_min=0)
+
+    for epoch in range(1, num_epochs + 1):
+        warmup = True if epoch <= 2 else False  # Warm-up for the first 2 epochs
+        train(model, device, train_loader, optimizer, scheduler, epoch, epsilon, warmup)
+
+if __name__ == '__main__':
+    main()
+
+
+
 # import torch
 # import torch.nn as nn
 # import torch.optim as optim
 # from dataset import ImageNetLoader
-# from model import resnet50, NormalizeByChannelMeanStd, ProcessedModel
+# from models import resnet18, NormalizeByChannelMeanStd, ProcessedModel
+# from attack import white_box 
+# from PIL import ImageFile
+# ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+# def train(model, device, train_loader, optimizer, epoch, eps):
+#     model.train()
+#     for batch_idx, (data, target) in enumerate(train_loader):
+#         data, target = data.to(device), target.to(device)
+
+#         # 使用您的attack库生成FGSM对抗样本
+#         fgsm = white_box.FGSM(model, eps=eps)
+#         perturbed_data = fgsm(data, target)
+
+#         # #使用PGD
+#         # fgsm = white_box.PGD(net, eps=eps, alpha=1 / 255, steps=10, random_start=True)  # Linf
+#         # perturbed_data = PGD(data, target)
+
+
+#         # 清零梯度
+#         optimizer.zero_grad()
+#         # 使用对抗样本进行训练
+#         output = model(perturbed_data)
+#         loss = nn.CrossEntropyLoss()(output, target)
+#         loss.backward()
+#         optimizer.step()
+
+#         if batch_idx % 100 == 0:
+#             print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} ({100. * batch_idx / len(train_loader):.0f}%)]\tLoss: {loss.item():.6f}')
+
+# def main():
+#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#     print(f'Training on {device}')
+
+#     data_dir = '/data0/mxy/imagenet/ILSVRC2012'
+#     train_loader = ImageNetLoader(data_dir, batch_size=128, train=True).load_data()
+
+#     model = ProcessedModel(resnet18, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])).to(device)
+
+#     optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+#     num_epochs = 10
+#     epsilon = 8 / 255  # 对抗强度
+
+#     for epoch in range(1, num_epochs + 1):
+#         train(model, device, train_loader, optimizer, epoch, epsilon)
+
+# if __name__ == '__main__':
+#     main()
+
+
+# import torch
+# import torch.nn as nn
+# import torch.optim as optim
+# from dataset import ImageNetLoader
+# from model import resnet18, NormalizeByChannelMeanStd, ProcessedModel
 
 # import torch.nn.functional as F
 # import attack
@@ -44,7 +168,7 @@
 #     train_loader = ImageNetLoader('path/to/your/imagenet/data', batch_size=32, train=True).load_data()
 
 #     # 初始化模型
-#     model = resnet50(pretrained=True)
+#     model = resnet18(pretrained=True)
 #     model = ProcessedModel(model, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])).to(device)
 
 #     optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
@@ -65,51 +189,3 @@
 #     #可以通过这种方式得到FGSM的对抗样本
 #     attack = attack.FGSM(net, eps=8 / 255)
 #     image = attack(image, label)
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from dataset import ImageNetLoader
-from models import resnet50, NormalizeByChannelMeanStd, ProcessedModel
-import attack 
-from PIL import ImageFile
-ImageFile.LOAD_TRUNCATED_IMAGES = True
-
-def train(model, device, train_loader, optimizer, epoch, eps):
-    model.train()
-    for batch_idx, (data, target) in enumerate(train_loader):
-        data, target = data.to(device), target.to(device)
-
-        # 使用您的attack库生成FGSM对抗样本
-        fgsm = attack.FGSM(model, eps=eps)
-        perturbed_data = fgsm(data, target)
-
-        # 清零梯度
-        optimizer.zero_grad()
-        # 使用对抗样本进行训练
-        output = model(perturbed_data)
-        loss = nn.CrossEntropyLoss()(output, target)
-        loss.backward()
-        optimizer.step()
-
-        if batch_idx % 100 == 0:
-            print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} ({100. * batch_idx / len(train_loader):.0f}%)]\tLoss: {loss.item():.6f}')
-
-def main():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f'Training on {device}')
-
-    data_dir = '/data0/mxy/imagenet/ILSVRC2012'
-    train_loader = ImageNetLoader(data_dir, batch_size=32, train=True).load_data()
-
-    model = ProcessedModel(resnet50(pretrained=True), NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])).to(device)
-
-    optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
-    num_epochs = 3
-    epsilon = 8 / 255  # 对抗强度
-
-    for epoch in range(1, num_epochs + 1):
-        train(model, device, train_loader, optimizer, epoch, epsilon)
-
-if __name__ == '__main__':
-    main()
