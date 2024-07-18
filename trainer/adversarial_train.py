@@ -72,7 +72,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f'Training on {device}')
 
-    data_dir = '/data0/mxy/imagenet/ILSVRC2012'
+    data_dir = '/opt/data/common/ILSVRC2012/'
     train_loader = ImageNetLoader(data_dir, batch_size=128, train=True).load_data()
     test_loader = ImageNetLoader(data_dir, batch_size=128, train=False).load_data()  # Assuming a similar function for test data
 
@@ -90,7 +90,7 @@ def main():
         train(model, device, train_loader, optimizer, scheduler, epoch, 8 / 255)  # EPSILON defined earlier
         test(model, device, test_loader, criterion)
 
-        model_path = '/opt/data/private/Attack-and-Defense-Integration-Project/trainer/'
+        model_path = '/opt/data/private/trained_model/FGSM_train/'
         torch.save(model.module.state_dict(), os.path.join(model_path, f'model_epoch_{epoch}.pth'))
 
 if __name__ == '__main__':
