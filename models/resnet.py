@@ -155,7 +155,7 @@ class ResNet(nn.Module):
 
     def forward(self, x):
         for m in self.modules():
-            if isinstance(m, (DropoutConv2d, BasicBlock, Bottleneck)):
+            if isinstance(m, (BasicBlock, Bottleneck)): #delete DropoutConv2d
                 m.drop = self.drop
 
         x = self.conv1(x)

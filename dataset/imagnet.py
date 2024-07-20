@@ -5,9 +5,11 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 
 class ImageNetLoader:
-    def __init__(self, data_dir, batch_size=32, train=True):
+    def __init__(self, data_dir, batch_size=32, train=True, num_workers=4, shuffle=True):
         self.data_dir = os.path.join(data_dir, 'train' if train else 'val')
         self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.shuffle = shuffle
         self.transform = self.build_transforms(train)
 
     def build_transforms(self, train):
@@ -28,5 +30,6 @@ class ImageNetLoader:
 
     def load_data(self):
         dataset = datasets.ImageFolder(root=self.data_dir, transform=self.transform)
-        dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+        # 使用num_workers来提高数据加载速度，shuffle选项由构造函数参数控制
+        dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=self.shuffle, num_workers=self.num_workers)
         return dataloader

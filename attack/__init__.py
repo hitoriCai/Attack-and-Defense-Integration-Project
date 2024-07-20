@@ -12,6 +12,6 @@ __all__ = [
     "PGDL2",
     "APGD",
     "APGDT",
-    "Square",
-    "QueryNet",
+    # "Square",
+    # "QueryNet",
 ]
