@@ -33,10 +33,36 @@ def test(model, testloader, attack=None):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
+    parser = argparse.ArgumentParser(description='Define hyperparameters for ImageNet.')
     parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
-    # parser.add_argument('--num_epoch', default=200, type=float, help='learning rate')
+    parser.add_argument('--num_epoch', default=200, type=float, help='learning rate')
     parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
+
+    parser.add_argument('--eps', default=8/255, type=float, help='epsilon')     # 8/255 or 3.0
+    parser.add_argument('--norm', default='Linf', type=str, help='norm')    # 'Linf' or 'L2'
+    parser.add_argument('--alpha', default=1/255, type=float, help='alpha')     # 1/255 or 0.5
+    parser.add_argument('--steps', default=10, type=int, help='steps')
+    parser.add_argument('--random_start', default=True, type=bool, help='random_start')
+    parser.add_argument('--n_restarts', default=1, type=int, help='n_restarts')
+    parser.add_argument('--seed', default=0, type=int, help='seed')     # queryattack---1
+    parser.add_argument('--loss', default='ce', type=str, help='loss')    # 'ce' or 'dlr' (for APGD)
+    parser.add_argument('--eot_iter', default=1, type=int, help='eot_iter')
+    parser.add_argument('--rho', default=.75, type=float, help='rho')
+    parser.add_argument('--verbose', default=False, type=bool, help='verbose')
+    parser.add_argument('--n_classes', default=1000, type=int, help='n_classes')
+
+    # QueryNet
+    parser.add_argument('--query_net', default='resnext101_32x8d', type=str, help='[inception_v3, mnasnet1_0, resnext101_32x8d] for ImageNet')
+    parser.add_argument('--num_x', type=int, default=10000, help='number of samples for evaluation.')
+    parser.add_argument('--num_srg', type=int, default=0, help='number of surrogates.')
+    parser.add_argument('--use_nas', action='store_true', help='use NAS to train the surrogate.')
+    parser.add_argument('--use_square_plus', action='store_true', help='use Square+.')
+    parser.add_argument('--p_init', type=float, default=0.05, help='hyperparameter of Square, the probability of changing a coordinate.')
+    parser.add_argument('--run_times', type=int, default=1, help='repeated running time.')
+    parser.add_argument('--l2_attack', action='store_true', help='perform l2 attack')
+    parser.add_argument('--num_iter', type=int, default=10000, help='maximum query times.')
+    parser.add_argument('--gpu', type=str, default='1', help='GPU number(s).')
+
     args = parser.parse_args()
 
     # 定义设备
@@ -113,11 +139,11 @@ if __name__ == '__main__':
     # attack = attack.APGDT(net, norm='L2', eps=3.0, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False, n_classes=1000)
 
     # 用SquareAttack攻击： 这里本来torchattack的示例是 n_queries=5000, 但跑着太慢了所以改成了100, 不知道该用什么参数
-    attack = attack.Square(net, norm='Linf', eps=8 / 255, n_queries=5000, n_restarts=1, p_init=.8, seed=0, verbose=False,
-                           targeted=False, loss='margin', resc_schedule=True)
+    # attack = attack.Square(net, norm='Linf', eps=8 / 255, n_queries=5000, n_restarts=1, p_init=.8, seed=0, verbose=False,
+    #                        targeted=False, loss='margin', resc_schedule=True)
 
     # 用QueryAttack攻击：（见querynet.py）
-
+    attack = attack.QueryAttack(args)
 
 
 
