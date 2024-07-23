@@ -1,5 +1,5 @@
 # main.py
-from trainer.vanilla_train import main
+from trainer.train_sgd_imagenet import main
 
 if __name__ == '__main__':
     main()

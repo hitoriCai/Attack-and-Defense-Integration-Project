@@ -40,7 +40,7 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',
                         ' (default: resnet18)')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
-parser.add_argument('--epochs', default=10, type=int, metavar='N',
+parser.add_argument('--epochs', default=90, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -208,8 +208,8 @@ def main_worker(gpu, ngpus_per_node, args):
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
 
-    train_loader = ImageNetLoader(args.data, batch_size=args.batch_size, train=True, num_workers=args.workers).load_data()
-    val_loader = ImageNetLoader(args.data, batch_size=args.batch_size, train=False, num_workers=args.workers).load_data()
+    # train_loader = ImageNetLoader(args.data, batch_size=args.batch_size, train=True, num_workers=args.workers).load_data()
+    # val_loader = ImageNetLoader(args.data, batch_size=args.batch_size, train=False, num_workers=args.workers).load_data()
     # # optionally resume from a checkpoint
     # if args.resume:
     #     if os.path.isfile(args.resume):
@@ -299,8 +299,8 @@ def main_worker(gpu, ngpus_per_node, args):
         validate(val_loader, model, criterion, args)
         return
 
-    # if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-    #     torch.save(model.state_dict(), 'save_' + args.arch + '/' + str(sample_idx)+'.pt')
+    if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+        torch.save(model.state_dict(), 'save_' + args.arch + '/' + str(sample_idx)+'.pt')
     
     
     for epoch in range(args.start_epoch, args.epochs):
