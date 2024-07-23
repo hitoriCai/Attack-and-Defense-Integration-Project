@@ -51,7 +51,9 @@ class ProcessedModel(nn.Module):
         x = self.data_normalize(x)
         return self.net(x)
     
+data_normalizer = NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
+resnet18 = ProcessedModel(torchvision.models.resnet50(), data_normalize=data_normalizer)
 
 
 

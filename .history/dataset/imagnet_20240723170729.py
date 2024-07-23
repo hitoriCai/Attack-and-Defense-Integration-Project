@@ -6,12 +6,12 @@ from torch.utils.data import DataLoader
 import torch
 
 class ImageNetLoader:
-    def __init__(self, data_dir, batch_size=32, train=True, num_workers=4, shuffle=True, transform=None):
+    def __init__(self, data_dir, batch_size=32, train=True, num_workers=4, shuffle=True):
         self.data_dir = os.path.join(data_dir, 'train' if train else 'val')
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.shuffle = shuffle
-        self.transform = transform if transform else self.build_transforms(train)
+        self.transform = self.build_transforms(train)
 
     def build_transforms(self, train):
         if train:

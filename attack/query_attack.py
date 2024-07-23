@@ -476,19 +476,6 @@ class Square(Attack):
 
 
 # QueryAttack ##########################################################
-def pseudo_gaussian_pert_rectangles(x, y):
-    delta = np.zeros([x, y])
-    x_c, y_c = x // 2 + 1, y // 2 + 1
-    counter2 = [x_c - 1, y_c - 1]
-    for counter in range(0, max(x_c, y_c)):
-        delta[max(counter2[0], 0):min(counter2[0] + (2 * counter + 1), x),
-        max(0, counter2[1]):min(counter2[1] + (2 * counter + 1), y)] += 1.0 / (counter + 1) ** 2
-        counter2[0] -= 1
-        counter2[1] -= 1
-    delta /= np.sqrt(np.sum(delta ** 2, keepdims=True))
-    return delta
-
-
 class QueryNet():
     def __init__(self, sampler, victim_name, surrogate_names, use_square_plus, use_square, use_nas, l2_attack, eps,
                  batch_size):
@@ -560,20 +547,32 @@ class QueryNet():
         else:
             self.eva_weights_zero_threshold = 10
 
+    def pseudo_gaussian_pert_rectangles(self, x, y):
+        delta = np.zeros([x, y])
+        x_c, y_c = x // 2 + 1, y // 2 + 1
+        counter2 = [x_c - 1, y_c - 1]
+        for counter in range(0, max(x_c, y_c)):
+            delta[max(counter2[0], 0):min(counter2[0] + (2 * counter + 1), x),
+            max(0, counter2[1]):min(counter2[1] + (2 * counter + 1), y)] += 1.0 / (counter + 1) ** 2
+            counter2[0] -= 1
+            counter2[1] -= 1
+        delta /= np.sqrt(np.sum(delta ** 2, keepdims=True))
+        return delta
+
     def meta_pseudo_gaussian_pert(self, s):
         delta = np.zeros([s, s])
         n_subsquares = 2
         if n_subsquares == 2:
-            delta[:s // 2] = pseudo_gaussian_pert_rectangles(s // 2, s)
-            delta[s // 2:] = pseudo_gaussian_pert_rectangles(s - s // 2, s) * (-1)
+            delta[:s // 2] = self.pseudo_gaussian_pert_rectangles(s // 2, s)
+            delta[s // 2:] = self.pseudo_gaussian_pert_rectangles(s - s // 2, s) * (-1)
             delta /= np.sqrt(np.sum(delta ** 2, keepdims=True))
             if np.random.rand(1) > 0.5: delta = np.transpose(delta)
 
         elif n_subsquares == 4:
-            delta[:s // 2, :s // 2] = pseudo_gaussian_pert_rectangles(s // 2, s // 2) * np.random.choice([-1, 1])
-            delta[s // 2:, :s // 2] = pseudo_gaussian_pert_rectangles(s - s // 2, s // 2) * np.random.choice([-1, 1])
-            delta[:s // 2, s // 2:] = pseudo_gaussian_pert_rectangles(s // 2, s - s // 2) * np.random.choice([-1, 1])
-            delta[s // 2:, s // 2:] = pseudo_gaussian_pert_rectangles(s - s // 2, s - s // 2) * np.random.choice(
+            delta[:s // 2, :s // 2] = self.pseudo_gaussian_pert_rectangles(s // 2, s // 2) * np.random.choice([-1, 1])
+            delta[s // 2:, :s // 2] = self.pseudo_gaussian_pert_rectangles(s - s // 2, s // 2) * np.random.choice([-1, 1])
+            delta[:s // 2, s // 2:] = self.pseudo_gaussian_pert_rectangles(s // 2, s - s // 2) * np.random.choice([-1, 1])
+            delta[s // 2:, s // 2:] = self.pseudo_gaussian_pert_rectangles(s - s // 2, s - s // 2) * np.random.choice(
                 [-1, 1])
             delta /= np.sqrt(np.sum(delta ** 2, keepdims=True))
         return delta
@@ -1056,5 +1055,35 @@ def attack(model, x, y, logits_clean, dataset, batch_size, run_time, args, log):
         np.save(metrics_path, metrics)
         if acc_corr == 0: break
     torch.cuda.empty_cache()
+
+
+def QueryAttack(args):
+    query_net, eps, seed, l2_attack, num_iter, p_init, num_srg, use_square_plus, use_nas = \
+        (args.eps / 255 if not args.l2_attack else args.eps), (args.seed if args.seed != -1 else args.run_time), \
+        args.query_net, args.l2_attack, args.num_iter, args.p_init, args.num_srg, args.use_square_plus, args.use_nas
+    np.random.seed(args.seed)
+
+    if args.use_nas: assert args.num_srg > 0
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+    log = Logger('')
+
+    for model_name in args.query_net.split(','):
+        if model_name in ['inception_v3', 'mnasnet1_0', 'resnext101_32x8d']:         dataset = 'imagenet'
+        else: raise ValueError('Invalid Victim Name!')
+
+        # imagenet
+        assert (not args.use_nas), 'NAS is not supported for ImageNet for resource concerns'
+        if not ((args.l2_attack and args.eps == 5) or (not args.l2_attack and args.eps == 12.75)):
+            print('Warning: not using default eps in the paper, which is l2=5 or linfty=12.75 for ImageNet.')
+        batch_size = 100 if model_name != 'resnext101_32x8d' else 32
+        model = VictimImagenet(model_name, batch_size=batch_size)
+        x_test, y_test = load_imagenet(args.num_x, model)
+
+        logits_clean = model(x_test)
+        corr_classified = logits_clean.argmax(1) == y_test.argmax(1)
+        print('Clean accuracy: {:.2%}'.format(np.mean(corr_classified)) + ' ' * 40)
+        y_test = dense_to_onehot(y_test.argmax(1), n_cls=10 if dataset != 'imagenet' else 1000)
+        for run_time in range(args.run_times):
+            attack(model, x_test[corr_classified], y_test[corr_classified], logits_clean[corr_classified], dataset, batch_size, run_time, args, log)
 
 
