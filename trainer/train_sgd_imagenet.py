@@ -22,12 +22,13 @@ import torch.multiprocessing as mp
 import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-import torchvision.models as models
+# import torchvision.datasets as datasets
+# import torchvision.models as models
+from dataset import ImageNetLoader
+import dataset
+from models import resnet18, NormalizeByChannelMeanStd, ProcessedModel
 
-model_names = sorted(name for name in models.__dict__
-    if name.islower() and not name.startswith("__")
-    and callable(models.__dict__[name]))
+model_names = ['resnet18', 'resnet50', 'resnet101', 'ProcessedModel']
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('data', metavar='DIR',
@@ -39,7 +40,7 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',
                         ' (default: resnet18)')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
-parser.add_argument('--epochs', default=90, type=int, metavar='N',
+parser.add_argument('--epochs', default=10, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -106,8 +107,8 @@ def main():
     
     args = parser.parse_args()
 
-    
     save_dir = 'save_' + args.arch 
+    # save_dir = '/data0/mxy/imagenet/Attack-and-Defense-Integration-Project' + args.arch
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
@@ -164,10 +165,10 @@ def main_worker(gpu, ngpus_per_node, args):
     # create model
     if args.pretrained:
         print("=> using pre-trained model '{}'".format(args.arch))
-        model = models.__dict__[args.arch](pretrained=True)
+        model = resnet18
     else:
         print("=> creating model '{}'".format(args.arch))
-        model = models.__dict__[args.arch]()
+        model = resnet18
 
     if not torch.cuda.is_available():
         print('using CPU, this will be slow')
@@ -207,70 +208,99 @@ def main_worker(gpu, ngpus_per_node, args):
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
 
-    # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            if args.gpu is None:
-                checkpoint = torch.load(args.resume)
-            else:
-                # Map model to be loaded to specified single gpu.
-                loc = 'cuda:{}'.format(args.gpu)
-                checkpoint = torch.load(args.resume, map_location=loc)
-            args.start_epoch = checkpoint['epoch']
-            best_acc1 = checkpoint['best_acc1']
-            if args.gpu is not None:
-                # best_acc1 may be from a checkpoint from a different GPU
-                best_acc1 = best_acc1.to(args.gpu)
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
-        else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
+    train_loader = ImageNetLoader(args.data, batch_size=args.batch_size, train=True, num_workers=args.workers).load_data()
+    val_loader = ImageNetLoader(args.data, batch_size=args.batch_size, train=False, num_workers=args.workers).load_data()
+    # # optionally resume from a checkpoint
+    # if args.resume:
+    #     if os.path.isfile(args.resume):
+    #         print("=> loading checkpoint '{}'".format(args.resume))
+    #         if args.gpu is None:
+    #             checkpoint = torch.load(args.resume)
+    #         else:
+    #             # Map model to be loaded to specified single gpu.
+    #             loc = 'cuda:{}'.format(args.gpu)
+    #             checkpoint = torch.load(args.resume, map_location=loc)
+    #         args.start_epoch = checkpoint['epoch']
+    #         best_acc1 = checkpoint['best_acc1']
+    #         if args.gpu is not None:
+    #             # best_acc1 may be from a checkpoint from a different GPU
+    #             best_acc1 = best_acc1.to(args.gpu)
+    #         model.load_state_dict(checkpoint['state_dict'])
+    #         optimizer.load_state_dict(checkpoint['optimizer'])
+    #         print("=> loaded checkpoint '{}' (epoch {})"
+    #               .format(args.resume, checkpoint['epoch']))
+    #     else:
+    #         print("=> no checkpoint found at '{}'".format(args.resume))
 
-    cudnn.benchmark = True
+    # cudnn.benchmark = True
 
-    # Data loading code
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
+    # # Data loading code
+    # traindir = os.path.join(args.data, 'train')
+    # valdir = os.path.join(args.data, 'val')
+    # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+    #                                  std=[0.229, 0.224, 0.225])
 
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ]))
+    # # train_dataset = dataset.ImageFolder(
+    # #     traindir,
+    # #     transforms.Compose([
+    # #         transforms.RandomResizedCrop(224),
+    # #         transforms.RandomHorizontalFlip(),
+    # #         transforms.ToTensor(),
+    # #         normalize,
+    # #     ]))
+    # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    # custom_transforms = transforms.Compose([
+    #     transforms.RandomResizedCrop(224),
+    #     transforms.RandomHorizontalFlip(),
+    #     transforms.ToTensor(),
+    #     normalize,
+    # ])
 
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    else:
-        train_sampler = None
+    # data_dir = '/data0/mxy/imagenet/ILSVRC2012'
+    # train_loader = ImageNetLoader(data_dir, batch_size=256, train=True, transform=custom_transforms).load_data()
 
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler)
+    # if args.distributed:
+    #     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    # else:
+    #     train_sampler = None
 
-    val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize,
-        ])),
-        batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
+    # train_loader = torch.utils.data.DataLoader(
+    #     train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+    #     num_workers=args.workers, pin_memory=True, sampler=train_sampler)
+
+    # # val_loader = torch.utils.data.DataLoader(
+    # #     dataset.ImageFolder(valdir, transforms.Compose([
+    # #         transforms.Resize(256),
+    # #         transforms.CenterCrop(224),
+    # #         transforms.ToTensor(),
+    # #         normalize,
+    # #     ])),
+    # #     batch_size=args.batch_size, shuffle=False,
+    # #     num_workers=args.workers, pin_memory=True)
+
+    # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    # val_transforms = transforms.Compose([
+    #     transforms.Resize(256),
+    #     transforms.CenterCrop(224),
+    #     transforms.ToTensor(),
+    #     normalize,
+    # ])
+
+    # # 数据目录和加载器参数
+    # data_dir = '/path/to/imagenet'
+    batch_size = 256
+    # num_workers = 4
+    # shuffle = False  # 验证集通常不需要打乱
+
+    # # 创建验证数据加载器实例
+    # val_loader = ImageNetLoader(data_dir, batch_size=batch_size, train=False, num_workers=num_workers, shuffle=shuffle, transform=val_transforms).load_data()
 
     if args.evaluate:
         validate(val_loader, model, criterion, args)
         return
 
-    if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-        torch.save(model.state_dict(), 'save_' + args.arch + '/' + str(sample_idx)+'.pt')
+    # if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+    #     torch.save(model.state_dict(), 'save_' + args.arch + '/' + str(sample_idx)+'.pt')
     
     
     for epoch in range(args.start_epoch, args.epochs):
