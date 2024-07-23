@@ -3,7 +3,6 @@
 import os
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
-import torch
 
 class ImageNetLoader:
     def __init__(self, data_dir, batch_size=32, train=True, num_workers=4, shuffle=True):
@@ -34,37 +33,3 @@ class ImageNetLoader:
         # 使用num_workers来提高数据加载速度，shuffle选项由构造函数参数控制
         dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=self.shuffle, num_workers=self.num_workers)
         return dataloader
-    
-
-def get_dataloader_from_args(args):
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
-    
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            # normalize,
-        ]))
-
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    else:
-        train_sampler = None
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler)
-
-    val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            # normalize,
-        ])),
-        batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
-    return train_sampler, train_loader, val_loader

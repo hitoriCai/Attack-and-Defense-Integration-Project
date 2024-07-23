@@ -3,7 +3,6 @@
 import os
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
-import torch
 
 class ImageNetLoader:
     def __init__(self, data_dir, batch_size=32, train=True, num_workers=4, shuffle=True):
@@ -67,4 +66,3 @@ def get_dataloader_from_args(args):
         ])),
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
-    return train_sampler, train_loader, val_loader

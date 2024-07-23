@@ -67,4 +67,4 @@ def get_dataloader_from_args(args):
         ])),
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
-    return train_sampler, train_loader, val_loader
+    return train_sampler, 
