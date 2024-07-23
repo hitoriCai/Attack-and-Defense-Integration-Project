@@ -83,7 +83,7 @@ def main():
     base_model = resnet18
     data_normalizer = NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     model = ProcessedModel(base_model, data_normalize=data_normalizer)
-    model = nn.DataParallel(model).to(device)  # Wrap the model for multi-GPU training
+    model = nn.DataParallel(model).to(device)  
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=0.06, momentum=0.9)
