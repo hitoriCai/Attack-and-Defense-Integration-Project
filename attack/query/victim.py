@@ -13,6 +13,8 @@ from models import make_model
 device = torch.device('cuda')
 
 
+'''
+原代码
 def get_margin_loss(y, logits, targeted=False, loss_type='margin_loss'):
     """ Implements the margin loss (difference between the correct and 2nd best class). """
     if loss_type == 'margin_loss':
@@ -28,6 +30,28 @@ def get_margin_loss(y, logits, targeted=False, loss_type='margin_loss'):
     else:
         raise ValueError('Wrong loss.')
     return loss.flatten()
+'''
+
+# 改成下面这个代码
+def get_margin_loss(y, logits, targeted=False, loss_type='margin_loss'):
+    """ Implements the margin loss (difference between the correct and 2nd best class). """
+    logits = torch.tensor(logits, dtype=torch.float32)
+    y = torch.tensor(y, dtype=torch.float32)
+    if loss_type == 'margin_loss':
+        preds_correct_class = (logits * y).sum(dim=1, keepdim=True)
+        diff = preds_correct_class - logits
+        correct_class_indices = torch.argmax(y, dim=1)
+        diff[torch.arange(len(y)), correct_class_indices] = float('inf')
+        margin, _ = torch.min(diff, dim=1, keepdim=True)
+        loss = -margin if targeted else margin
+    elif loss_type == 'cross_entropy':
+        probs = softmax(logits)
+        correct_probs = (probs * y).sum(dim=1)
+        loss = -torch.log(correct_probs)
+        loss = -loss if not targeted else loss
+    else:
+        raise ValueError('Wrong loss type.')
+    return loss.cpu().numpy().flatten()
 
 
 class VictimCifar(nn.Module):
@@ -102,7 +126,7 @@ class VictimMnist(nn.Module):
 
 
 class VictimImagenet(nn.Module):
-    def __init__(self, arch, device=device, batch_size=100, **kwargs):
+    def __init__(self, arch, device=device, batch_size=100, **kwargs):  # batch_size = 100
         super(VictimImagenet, self).__init__()
         self.arch = arch
         self.cnn = getattr(torchvision.models, arch)(pretrained=True).to(device).eval()

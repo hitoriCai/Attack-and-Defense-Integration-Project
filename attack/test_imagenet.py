@@ -31,6 +31,24 @@ def test(model, testloader, attack=None):
     return accuracy
 
 
+def test_query(model, x_test, y_test, logits_clean, attack=None):
+    model.eval()
+    correct = 0
+    total = 0
+    # x_test = torch.from_numpy(x_test)
+    # x_test = x_test.to(device)
+    # y_test = torch.from_numpy(y_test)
+    # y_test = y_test.to(device)
+    # logits_clean = torch.from_numpy(logits_clean)
+    # logits_clean = logits_clean.to(device)
+    x_best = attack(model, x_test, y_test, logits_clean)    # adv_images after 'iter' queries
+    outputs = model(x_best)
+    _, predicted = torch.max(outputs.data, 1)
+    total += y_test.size(0)
+    correct += (predicted == y_test).sum().item()
+    accuracy = 100 * correct / total
+    return accuracy
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Define hyperparameters for ImageNet.')
@@ -38,6 +56,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_epoch', default=200, type=float, help='learning rate')
     parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 
+    '''
     parser.add_argument('--eps', default=8/255, type=float, help='epsilon')     # 8/255 or 3.0
     parser.add_argument('--norm', default='Linf', type=str, help='norm')    # 'Linf' or 'L2'
     parser.add_argument('--alpha', default=1/255, type=float, help='alpha')     # 1/255 or 0.5
@@ -62,8 +81,9 @@ if __name__ == '__main__':
     parser.add_argument('--l2_attack', action='store_true', help='perform l2 attack')
     parser.add_argument('--num_iter', type=int, default=10000, help='maximum query times.')
     parser.add_argument('--gpu', type=str, default='1', help='GPU number(s).')
-
+    '''
     args = parser.parse_args()
+
 
     # 定义设备
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -73,14 +93,16 @@ if __name__ == '__main__':
     # 指定ImageNet数据集的本地路径
     data_dir = '/opt/data/common/ILSVRC2012'
     # data_dir = '/home/datasets/ILSVRC2012'
-    # Data
+    # Data/opt/data/common/ILSVRC2012
     print('==> Preparing data..')
+    '''
     transform_train = transforms.Compose([
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
+    '''
 
     transform_test = transforms.Compose([
         transforms.Resize(256),
@@ -90,11 +112,12 @@ if __name__ == '__main__':
     ])
 
     testset = ImageFolder(root=os.path.join(data_dir, 'val'), transform=transform_test)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=16, shuffle=False, num_workers=2)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=64, shuffle=False, num_workers=2)
 
     # Model
     print('==> Building model..')
-    net = models.resnet50(pretrained=True)  # resnet50
+    # net = models.resnet50(pretrained=True)  # resnet50
+    net = models.resnext101_32x8d(pretrained=True)  # resnet101
     net = net.to(device)
     if device == 'cuda':
         net = torch.nn.DataParallel(net)
@@ -142,9 +165,12 @@ if __name__ == '__main__':
     # attack = attack.Square(net, norm='Linf', eps=8 / 255, n_queries=5000, n_restarts=1, p_init=.8, seed=0, verbose=False,
     #                        targeted=False, loss='margin', resc_schedule=True)
 
-    # 用QueryAttack攻击：（见querynet.py）
-    attack = attack.QueryAttack(args)
-
+    # 用QueryAttack攻击：
+    attack = attack.QueryAttack(net, eps=8/255, iter=5000)
+    x_test, y_test, logits_clean = attack.get_xylogits(model_names='resnext101_32x8d')
+    # only for QueryAttack:
+    attack_accuracy = test_query(net, x_test, y_test, logits_clean, attack=attack)
+    print(f'After {iter}% iters, accuracy on attacked test images: {attack_accuracy:.2f}%')
 
 
     # 测试原始模型在干净测试集上的准确度
@@ -153,8 +179,8 @@ if __name__ == '__main__':
 
     # 测试模型在攻击后的测试集上的准确度
     # for s in range(num_epoch)
-    attack_accuracy = test(net, testloader, attack=attack)
-    print(f'Accuracy on attacked test images: {attack_accuracy:.2f}%')
+    # attack_accuracy = test(net, testloader, attack=attack)
+    # print(f'Accuracy on attacked test images: {attack_accuracy:.2f}%')
 
 
 

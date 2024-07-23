@@ -477,8 +477,8 @@ class Square(Attack):
 
 # QueryAttack ##########################################################
 class QueryNet():
-    def __init__(self, sampler, victim_name, surrogate_names, use_square_plus, use_square, use_nas, l2_attack, eps,
-                 batch_size):
+    def __init__(self, sampler, victim_name, surrogate_names, use_square_plus, use_square, use_nas, eps,
+                 batch_size): # delete l2_attack
         self.surrogate_names = surrogate_names
         self.use_surrogate_attacker = self.surrogate_names != []
         self.use_square_plus = use_square_plus
@@ -503,8 +503,8 @@ class QueryNet():
         os.makedirs(self.save_surrogate_path)
 
         self.sampler = sampler
-        self.generator = PGDGeneratorInfty(int(batch_size / 2)) if not l2_attack else PGDGenerator2(int(batch_size / 2))
-        self.square_attack = self.square_attack_linfty if not l2_attack else self.square_attack_l2
+        self.generator = PGDGeneratorInfty(int(batch_size / 2)) # if not l2_attack else PGDGenerator2(int(batch_size / 2))
+        self.square_attack = self.square_attack_linfty # if not l2_attack else self.square_attack_l2
         self.surrogates = []
         os.makedirs('query_attack_sub/pretrained', exist_ok=True)
         gpus = torch.cuda.device_count()
@@ -525,9 +525,9 @@ class QueryNet():
                                  n_channels=self.sampler.data.shape[1], softmax='easydl' in victim_name,
                                  gpu_id=0 if gpus == 1 else i % (gpus - 1) + 1))
 
-            save_info = 'pretrained/netSTrained_{}_{}_{}.pth'.format(surrogate_name, victim_name,
+            save_info = 'query/pretrained/netSTrained_{}_{}_{}.pth'.format(surrogate_name, victim_name,
                                                                      0) if not self.use_nas else \
-                'pretrained/netSTrained_NAS{}_{}_latest.pth'.format(self.use_nas_layers[i], self.victim_name)
+                'query/pretrained/netSTrained_NAS{}_{}_latest.pth'.format(self.use_nas_layers[i], self.victim_name)
 
             self.surrogate_save_paths.append(save_info)
             if os.path.exists(save_info):
@@ -722,7 +722,7 @@ class QueryNet():
                 x_new_candidate.append(self.square_attacker(x_curr, x_best_curr, **kwargs))
             return x_new_candidate
 
-    def forward(self, x_curr, x_best_curr, y_curr, get_surrogate_loss, **kwargs):
+    def forward(self, x_curr, x_best_curr, y_curr, get_surrogate_loss, batch_size, **kwargs):
         x_new_candidate = self.yield_candidate_queries(x_curr, x_best_curr, y_curr, **kwargs)
         if len(x_new_candidate) == 1:
             return x_new_candidate[0], None  # max(w_{1~n}) < w_{n+1} < w_{n+2}, use square only
@@ -732,7 +732,7 @@ class QueryNet():
                 loss_candidate_for_one_attacker = []
                 for evaluator_id in range(len(self.surrogate_names)):
                     loss_candidate_for_one_attacker.append(
-                        get_surrogate_loss(self.surrogates[evaluator_id], x_new_candidate[attacker_id], y_curr) *
+                        get_surrogate_loss(self.surrogates[evaluator_id], x_new_candidate[attacker_id], y_curr, batch_size) *
                         self.attacker_eva_weights[evaluator_id]
                     )
                 loss_candidate.append(sum(loss_candidate_for_one_attacker) / len(loss_candidate_for_one_attacker))
@@ -955,135 +955,298 @@ def p_selection(p_init, it, num_iter):
     elif 8000 < it <= 10000:  return p_init / 512
     else:                     return p_init
 
-
-def attack(model, x, y, logits_clean, dataset, batch_size, run_time, args, log):
-    eps, seed, l2_attack, num_iter, p_init, num_srg, use_square_plus, use_nas = \
-        (args.eps / 255 if not args.l2_attack else args.eps), (args.seed if args.seed != -1 else run_time), \
-        args.l2_attack, args.num_iter, args.p_init, args.num_srg, args.use_square_plus, args.use_nas
-    np.random.seed(seed)
-    min_val, max_val = 0, 1
-    c, h, w = x.shape[1:]
-    n_features = c * h * w
-
-    if l2_attack: # the initial stripes in square attack
-        delta_init = np.zeros(x.shape)
-        s = h // 5
-        sp_init = (h - s * 5) // 2
-        center_h = sp_init + 0
-        for counter in range(h // s):
-            center_w = sp_init + 0
-            for counter2 in range(w // s):
-                delta_init[:, :, center_h:center_h + s, center_w:center_w + s] += QueryNet.meta_pseudo_gaussian_pert(None, s).reshape(
-                    [1, 1, s, s]) * np.random.choice([-1, 1], size=[x.shape[0], c, 1, 1])
-                center_w += s
-            center_h += s
-        x_best = np.clip(x + delta_init / np.sqrt(np.sum(delta_init ** 2, axis=(1, 2, 3), keepdims=True)) * eps, 0, 1)
-    else:
-        x_best = np.clip(x + np.random.choice([-eps, eps], size=[x.shape[0], c, 1, w]), min_val, max_val)
-
-    logits = model(x_best)
-    loss_min = get_margin_loss(y, logits)
-    n_queries = np.ones(x.shape[0]) * 2  # have queried with original samples and stripe samples
-
-    surrogate_names = ['DenseNet121', 'ResNet50', 'DenseNet169', 'ResNet101', 'DenseNet201', 'VGG19'][:num_srg] # surrogates if not using nas
-    result_path = get_time() + f'_{dataset}_{model.arch}' + \
-        ('_l2' if l2_attack else '_linfty') + \
-        f'_eps{round(eps* (255 if not l2_attack else 1), 2)}' + \
-        ('_Eval' if num_srg != 0 else '') + \
-        ('_Sqr+' if use_square_plus else '') + \
-        (f'_NAS{num_srg}' if use_nas else ('_'+'-'.join(surrogate_names) if len(surrogate_names) != 0 else ''))
-    print(result_path)
-    logger = LoggerUs(result_path)
-    os.makedirs(result_path + '/log', exist_ok=True)
-    log.reset_path(result_path + '/log/main.log')
-    metrics_path = logger.result_paths['base'] + '/log/metrics'
-    log.print(str(args))
-
-    sampler = DataManager(x, logits_clean, eps, result_dir=result_path, loss_init=get_margin_loss(y, logits_clean))
-    sampler.update_buffer(x_best, logits, loss_min, logger, targeted=False, data_indexes=None, margin_min=loss_min)
-    sampler.update_lipschitz()
-    querynet = QueryNet(sampler, model.arch, surrogate_names, use_square_plus, True, use_nas, l2_attack, eps, batch_size)
-
-    def get_surrogate_loss(srgt, x_adv, y_ori): # for transferability evaluation in QueryNet's 2nd forward operation
-        if x_adv.shape[0] <= batch_size:  return get_margin_loss(y_ori, srgt(torch.Tensor(x_adv)).cpu().detach().numpy())
-        batch_num = int(x_adv.shape[0]/batch_size)
-        if batch_size * batch_num != int(x_adv.shape[0]): batch_num += 1
-        loss_value = get_margin_loss(y_ori[:batch_size], srgt(torch.Tensor(x_adv[:batch_size])).cpu().detach().numpy())
-        for i in range(batch_num-1):
-            new_loss_value = get_margin_loss(y_ori[batch_size*(i+1):batch_size*(i+2)], srgt(torch.Tensor(x_adv[batch_size*(i+1):batch_size*(i+2)])).cpu().detach().numpy())
-            loss_value = np.concatenate((loss_value, new_loss_value), axis=0)
-            del new_loss_value
-        return loss_value
-
-    time_start = time.time()
-    metrics = np.zeros([num_iter, 7])
-    for i_iter in range(num_iter):
-        # focus on unsuccessful AEs
-        idx_to_fool = loss_min > 0
-        x_curr, x_best_curr, y_curr, loss_min_curr = x[idx_to_fool], x_best[idx_to_fool], y[idx_to_fool], loss_min[idx_to_fool]
-
-        # QueryNet's forward propagation
-        x_q, a = querynet.forward(x_curr, x_best_curr, y_curr, get_surrogate_loss, min_val=min_val, max_val=max_val, p=p_selection(p_init, i_iter, num_iter), targeted=False)
-
-        # query
-        logits = model(x_q)
-        loss = get_margin_loss(y_curr, logits)
-        idx_improved = loss < loss_min_curr
-        loss_min[idx_to_fool] = idx_improved * loss + ~idx_improved * loss_min_curr
-        idx_improved = np.reshape(idx_improved, [-1, *[1] * len(x.shape[:-1])])
-        x_best[idx_to_fool] = idx_improved * x_q + ~idx_improved * x_best_curr
-        n_queries[idx_to_fool] += 1
-
-        # QueryNet's backward propagation
-        message = querynet.backward(idx_improved, a, data_indexes=np.where(idx_to_fool)[0],
-            margin_min=loss_min, img_adv=x_q, lbl_adv=logits, loss=loss, logger=logger, targeted=False)
-        if a is not None:
-            print(' '*80, end='\r')
-            log.print(message)
-            querynet.sampler.save(i_iter)
-
-        # logging
-        acc_corr = (loss_min > 0.0).mean()
-        mean_nq_all, mean_nq = np.mean(n_queries), np.mean(n_queries[loss_min <= 0])
-        median_nq_all, median_nq = np.median(n_queries)-1, np.median(n_queries[loss_min <= 0])-1
-        avg_loss = np.mean(loss_min)
-        elapse = time.time() - time_start
-        msg = '{}: Acc={:.2%}, AQ_suc={:.2f}, MQ_suc={:.1f}, AQ_all={:.2f}, MQ_all={:.1f}, ALoss_all={:.2f}, |D|={:d}, Time={:.1f}s'.\
-            format(i_iter + 1, acc_corr, mean_nq, median_nq, mean_nq_all, median_nq_all, avg_loss, querynet.sampler.clean_sample_indexes[-1], elapse)
-        log.print(msg if 'easydl' not in model.arch else msg + ', query=%d' % model.query)
-        metrics[i_iter] = [acc_corr, mean_nq, median_nq, mean_nq_all, median_nq_all, avg_loss, elapse]
-        np.save(metrics_path, metrics)
-        if acc_corr == 0: break
-    torch.cuda.empty_cache()
+def get_surrogate_loss(srgt, x_adv, y_ori, batch_size): # for transferability evaluation in QueryNet's 2nd forward operation
+    if x_adv.shape[0] <= batch_size:  return get_margin_loss(y_ori, srgt(torch.Tensor(x_adv)).cpu().detach().numpy())
+    batch_num = int(x_adv.shape[0]/batch_size)
+    if batch_size * batch_num != int(x_adv.shape[0]): batch_num += 1
+    loss_value = get_margin_loss(y_ori[:batch_size], srgt(torch.Tensor(x_adv[:batch_size])).cpu().detach().numpy())
+    for i in range(batch_num-1):
+        new_loss_value = get_margin_loss(y_ori[batch_size*(i+1):batch_size*(i+2)], srgt(torch.Tensor(x_adv[batch_size*(i+1):batch_size*(i+2)])).cpu().detach().numpy())
+        loss_value = np.concatenate((loss_value, new_loss_value), axis=0)
+        del new_loss_value
+    return loss_value
 
 
-def QueryAttack(args):
-    query_net, eps, seed, l2_attack, num_iter, p_init, num_srg, use_square_plus, use_nas = \
-        (args.eps / 255 if not args.l2_attack else args.eps), (args.seed if args.seed != -1 else args.run_time), \
-        args.query_net, args.l2_attack, args.num_iter, args.p_init, args.num_srg, args.use_square_plus, args.use_nas
-    np.random.seed(args.seed)
 
-    if args.use_nas: assert args.num_srg > 0
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
-    log = Logger('')
+class QueryAttack(Attack):
+    r"""
+    Arguments:
+        model_names: default='resnext101_32x8d', type=str, [inception_v3, mnasnet1_0, resnext101_32x8d] for ImageNet.
+        num_x: type=int, default=10000, number of samples for evaluation.
+        num_srg: type=int, default=0, number of surrogates.
+        use_nas: action='store_true', use NAS to train the surrogate.
+        use_square_plus: action='store_true', use Square+.
+        p_init: type=float, default=0.05, hyperparameter of Square, the probability of changing a coordinate.
+        run_times: type=int, default=1, repeated running time.
+        l2_attack: action='store_true', perform l2 attack
+        num_iter: type=int, default=10000, maximum query times.
+        gpu: type=str, default='1', GPU number(s).
+    Examples:
+        >>> x_test, y_test, logits_clean = attack.QueryAttack.get_xylogits(model, model_names='resnext101_32x8d', num_x=10000, eps=8/255)
+        >>> attack = attack.QueryAttack(model, eps=8/255, iter=10000)
+        >>> adv_images = attack(model, x, y, logits_clean)     # images---x, labels---y
+    """
 
-    for model_name in args.query_net.split(','):
-        if model_name in ['inception_v3', 'mnasnet1_0', 'resnext101_32x8d']:         dataset = 'imagenet'
-        else: raise ValueError('Invalid Victim Name!')
+    def __init__ (self, model, eps=8/255, iter=10000, num_x=10000):
+        super().__init__("QueryAttack", model)
+        # some parameters
+        self.eps = eps
+        self.iter = iter
+        self.gpu = '1'
+        self.num_srg = 3 # number of surrogates
+        self.dataset = 'image_net'
+        self.use_square_plus = True # use Square+
+        self.use_nas = False # don't use NAS to train the surrogate
+        self.batch_size = 16 # batch_size = 100 if model_name != 'resnext101_32x8d' else 32
+        self.p_init = 0.05 # hyperparameter of Square, the probability of changing a coordinate
+        self.seed = 1 # for random number
+        self.num_x = num_x # default: 10000, number of samples for evaluation
 
-        # imagenet
-        assert (not args.use_nas), 'NAS is not supported for ImageNet for resource concerns'
-        if not ((args.l2_attack and args.eps == 5) or (not args.l2_attack and args.eps == 12.75)):
-            print('Warning: not using default eps in the paper, which is l2=5 or linfty=12.75 for ImageNet.')
-        batch_size = 100 if model_name != 'resnext101_32x8d' else 32
-        model = VictimImagenet(model_name, batch_size=batch_size)
-        x_test, y_test = load_imagenet(args.num_x, model)
+    def calculate_queryattack_rate(self, model, testloader, attack):  # test
+        model.eval()
+        correct = 0
+        total = 0
+        for images, labels in testloader:
+            images, labels = images.to(device), labels.to(device)
+            # 对图片进行攻击
+            images = attack(model, images, labels)
+            outputs = model(images)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+        accuracy = 100 * correct / total
+        return accuracy
+
+
+    def get_xylogits(self, model_names):
+        # model_names: default: 'resnext101_32x8d', '[inception_v3, mnasnet1_0, resnext101_32x8d] for ImageNet'
+        np.random.seed(self.seed)
+        if self.use_nas: assert self.num_srg > 0
+        os.environ["CUDA_VISIBLE_DEVICES"] = self.gpu
+
+        for model_name in model_names.split(','):
+            if model_name in ['inception_v3', 'mnasnet1_0', 'resnext101_32x8d']:
+                dataset = 'imagenet'
+            else:
+                raise ValueError('Invalid Victim Name!')
+
+        # imagenet 我们先假设model_name只有一个，即只选一个网络 #################################
+        assert (not self.use_nas), 'NAS is not supported for ImageNet for resource concerns'
+        if not (self.eps == 12.75):  # ((args.l2_attack and args.eps == 5) or (not args.l2_attack and eps == 12.75)
+            print('Warning: not using default eps in the paper, which is linfty=12.75 for ImageNet.')
+        model = VictimImagenet(model_name, batch_size=self.batch_size)
+        x_test, y_test = load_imagenet(self.num_x, model)
 
         logits_clean = model(x_test)
         corr_classified = logits_clean.argmax(1) == y_test.argmax(1)
         print('Clean accuracy: {:.2%}'.format(np.mean(corr_classified)) + ' ' * 40)
-        y_test = dense_to_onehot(y_test.argmax(1), n_cls=10 if dataset != 'imagenet' else 1000)
-        for run_time in range(args.run_times):
-            attack(model, x_test[corr_classified], y_test[corr_classified], logits_clean[corr_classified], dataset, batch_size, run_time, args, log)
+        y_test = dense_to_onehot(y_test.argmax(1), n_cls=1000)
 
+        return x_test[corr_classified], y_test[corr_classified], logits_clean[corr_classified]
+
+
+    def forward(self, model, x, y, logits_clean):
+        os.environ["CUDA_VISIBLE_DEVICES"] = self.gpu
+        # x = x.cpu().numpy()
+        np.random.seed(self.seed)
+        min_val, max_val = 0, 1
+        c, h, w = x.shape[1:]
+        n_features = c * h * w
+
+        '''
+        now we don't consider l2
+        if l2_attack: # the initial stripes in square attack
+            delta_init = np.zeros(x.shape)
+            s = h // 5
+            sp_init = (h - s * 5) // 2
+            center_h = sp_init + 0
+            for counter in range(h // s):
+                center_w = sp_init + 0
+                for counter2 in range(w // s):
+                    delta_init[:, :, center_h:center_h + s, center_w:center_w + s] += QueryNet.meta_pseudo_gaussian_pert(None, s).reshape(
+                        [1, 1, s, s]) * np.random.choice([-1, 1], size=[x.shape[0], c, 1, 1])
+                    center_w += s
+                center_h += s
+            x_best = np.clip(x + delta_init / np.sqrt(np.sum(delta_init ** 2, axis=(1, 2, 3), keepdims=True)) * eps, 0, 1)
+        else:
+            x_best = np.clip(x + np.random.choice([-eps, eps], size=[x.shape[0], c, 1, w]), min_val, max_val)
+        '''
+        x_best = np.clip(x + np.random.choice([-self.eps, self.eps], size=[x.shape[0], c, 1, w]), min_val, max_val)
+
+        # 显存够的话，直接下面这两行就可以了
+        # x_best = torch.from_numpy(x_best).float().to('cuda')
+        # logits = model(x_best)
+        # 显存不够的话，分批计算logits
+        num_batches = (len(x_best) + self.batch_size - 1) // self.batch_size  # 计算总批次数，确保最后的不足一个批次的数据也会被处理
+        logits_list = []
+        for i in range(num_batches):
+            start_idx = i * self.batch_size
+            end_idx = min(start_idx + self.batch_size, len(x_best))  # 确保索引不超出数据范围
+            x_batch = x_best[start_idx:end_idx]
+            if x_batch.shape[0] == 0:
+                continue
+            x_batch = torch.from_numpy(x_batch).float().to('cuda')
+            with torch.no_grad():
+                logits_batch = model(x_batch)
+            logits_list.append(logits_batch)
+            del x_batch
+            del logits_batch
+            torch.cuda.empty_cache()
+        logits = torch.cat(logits_list, dim=0)
+
+
+        loss_min = get_margin_loss(torch.from_numpy(y).to('cuda'), logits)
+        n_queries = np.ones(x.shape[0]) * 2  # have queried with original samples and stripe samples
+
+        surrogate_names = ['DenseNet121', 'ResNet50', 'DenseNet169', 'ResNet101', 'DenseNet201', 'VGG19'][
+                          :self.num_srg]  # surrogates if not using nas
+
+        result_path = get_time() + f'_{self.dataset}_ResNet101' + \
+                      ('_linfty') + \
+                      f'_eps{round(self.eps * 255, 2)}' + \
+                      ('_Eval' if self.num_srg != 0 else '') + \
+                      ('_Sqr+' if self.use_square_plus else '') + \
+                      (f'_NAS{self.num_srg}' if self.use_nas else (
+                          '_' + '-'.join(surrogate_names) if len(surrogate_names) != 0 else ''))
+        print(result_path)
+        log = Logger('')
+        logger = LoggerUs(result_path)
+        os.makedirs(result_path + '/log', exist_ok=True)
+        log.reset_path(result_path + '/log/main.log')
+        metrics_path = logger.result_paths['base'] + '/log/metrics'
+        # log.print(str(args))
+
+        # print(x.device(), logits_clean.device(), result_path.device(), y.device())
+        sampler = DataManager(x, logits_clean, self.eps, result_dir=result_path, loss_init=get_margin_loss(y, logits_clean))
+        sampler.update_buffer(x_best, logits.cpu().numpy(), loss_min, logger, targeted=False, data_indexes=None, margin_min=loss_min)
+        sampler.update_lipschitz()
+        print(surrogate_names, self.use_square_plus)
+        querynet = QueryNet(sampler, 'ResNet101', surrogate_names, self.use_square_plus, True, self.use_nas, self.eps,
+                            self.batch_size)  # only consider linf
+
+        time_start = time.time()
+        metrics = np.zeros([self.iter, 7])
+
+        # 对传入参数x图像集进行self.iter次的query，直到图像集的预测正确率为0（或到达self.iter次）
+        for i_iter in range(self.iter):
+            # focus on unsuccessful AEs
+            idx_to_fool = loss_min > 0
+            x_curr, x_best_curr, y_curr, loss_min_curr = x[idx_to_fool], x_best[idx_to_fool], y[idx_to_fool], loss_min[
+                idx_to_fool]
+
+            # QueryNet's forward propagation
+            x_q, a = querynet.forward(x_curr, x_best_curr, y_curr, get_surrogate_loss, self.batch_size, min_val=min_val,
+                                      max_val=max_val, p=p_selection(self.p_init, i_iter, self.iter), targeted=False)
+
+            # query
+            # 显存够的话，直接下面这行就可以了
+            # x_q = torch.from_numpy(x_q).float().to('cuda')
+            # logits = model(x_q)
+            # 显存不够的话，分批计算logits
+            num_batches = (len(x_q) + self.batch_size - 1) // self.batch_size  # 计算总批次数，确保最后的不足一个批次的数据也会被处理
+            logits_list = []
+            for i in range(num_batches):
+                start_idx = i * self.batch_size
+                end_idx = min(start_idx + self.batch_size, len(x_q))  # 确保索引不超出数据范围
+                x_batch = x_q[start_idx:end_idx]
+                if x_batch.shape[0] == 0:
+                    continue
+                x_batch = torch.from_numpy(x_batch).float().to('cuda')
+                with torch.no_grad():
+                    logits_batch = model(x_batch)
+                logits_list.append(logits_batch)
+                del x_batch
+                del logits_batch
+                torch.cuda.empty_cache()
+            logits = torch.cat(logits_list, dim=0)
+
+            loss = get_margin_loss(y_curr, logits)
+            idx_improved = loss < loss_min_curr
+            loss_min[idx_to_fool] = idx_improved * loss + ~idx_improved * loss_min_curr
+            idx_improved = np.reshape(idx_improved, [-1, *[1] * len(x.shape[:-1])])
+            x_best[idx_to_fool] = idx_improved * x_q + ~idx_improved * x_best_curr
+            n_queries[idx_to_fool] += 1
+
+            # QueryNet's backward propagation
+            message = querynet.backward(idx_improved, a, data_indexes=np.where(idx_to_fool)[0],
+                                        margin_min=loss_min, img_adv=x_q, lbl_adv=logits, loss=loss, logger=logger,
+                                        targeted=False)
+            if a is not None:
+                print(' ' * 80, end='\r')
+                log.print(message)
+                querynet.sampler.save(i_iter)
+
+            # 到这里为止，x_best就是经过query后的图片集
+
+        return x_best
+
+    '''
+            # logging
+            acc_corr = (loss_min > 0.0).mean()
+            mean_nq_all, mean_nq = np.mean(n_queries), np.mean(n_queries[loss_min <= 0])
+            median_nq_all, median_nq = np.median(n_queries) - 1, np.median(n_queries[loss_min <= 0]) - 1
+            avg_loss = np.mean(loss_min)
+            elapse = time.time() - time_start
+            msg = '{}: Acc={:.2%}, AQ_suc={:.2f}, MQ_suc={:.1f}, AQ_all={:.2f}, MQ_all={:.1f}, ALoss_all={:.2f}, |D|={:d}, Time={:.1f}s'. \
+                format(i_iter + 1, acc_corr, mean_nq, median_nq, mean_nq_all, median_nq_all, avg_loss,
+                       querynet.sampler.clean_sample_indexes[-1], elapse)
+            log.print(msg if 'easydl' not in model.arch else msg + ', query=%d' % model.query)
+            metrics[i_iter] = [acc_corr, mean_nq, median_nq, mean_nq_all, median_nq_all, avg_loss, elapse]
+            np.save(metrics_path, metrics)
+            if acc_corr == 0: break
+        torch.cuda.empty_cache()
+            
+            
+        images = x.clone().detach().to(self.device)
+        labels = y.clone().detach().to(self.device)
+        if self.targeted:
+            target_labels = self.get_target_label(images, labels)
+        loss = nn.CrossEntropyLoss()
+        images.requires_grad = True
+        outputs = self.get_logits(images)
+
+        # Calculate loss
+        if self.targeted:
+            cost = -loss(outputs, target_labels)
+        else:
+            cost = loss(outputs, labels)
+
+        # Update adversarial images
+        grad = torch.autograd.grad(
+            cost, images, retain_graph=False, create_graph=False
+        )[0]
+        adv_images = images.data + self.eps * grad.data.sign()
+        adv_images = torch.clamp(adv_images, min=0, max=1).detach()
+        return adv_images
+    
+    
+    def QueryAttack(args):
+        query_net, eps, seed, l2_attack, num_iter, p_init, num_srg, use_square_plus, use_nas = \
+            (args.eps / 255 if not args.l2_attack else args.eps), (args.seed if args.seed != -1 else args.run_time), \
+            args.query_net, args.l2_attack, args.num_iter, args.p_init, args.num_srg, args.use_square_plus, args.use_nas
+        np.random.seed(args.seed)
+    
+        if args.use_nas: assert args.num_srg > 0
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+        log = Logger('')
+    
+        for model_name in args.query_net.split(','):
+            if model_name in ['inception_v3', 'mnasnet1_0', 'resnext101_32x8d']:         dataset = 'imagenet'
+            else: raise ValueError('Invalid Victim Name!')
+    
+            # imagenet
+            assert (not args.use_nas), 'NAS is not supported for ImageNet for resource concerns'
+            if not ((args.l2_attack and args.eps == 5) or (not args.l2_attack and args.eps == 12.75)):
+                print('Warning: not using default eps in the paper, which is l2=5 or linfty=12.75 for ImageNet.')
+            batch_size = 100 if model_name != 'resnext101_32x8d' else 32
+            model = VictimImagenet(model_name, batch_size=batch_size)
+            x_test, y_test = load_imagenet(args.num_x, model)
+    
+            logits_clean = model(x_test)
+            corr_classified = logits_clean.argmax(1) == y_test.argmax(1)
+            print('Clean accuracy: {:.2%}'.format(np.mean(corr_classified)) + ' ' * 40)
+            y_test = dense_to_onehot(y_test.argmax(1), n_cls=10 if dataset != 'imagenet' else 1000)
+            for run_time in range(args.run_times):
+                attack(model, x_test[corr_classified], y_test[corr_classified], logits_clean[corr_classified], dataset, batch_size, run_time, args, log)
+    '''
 
