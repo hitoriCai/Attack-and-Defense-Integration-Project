@@ -3,3 +3,4 @@ backup_query/
 QueryNet/
 save_resnet18/
 *.tar
+.history
