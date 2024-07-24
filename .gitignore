@@ -4,3 +4,5 @@ QueryNet/
 save_resnet18/
 *.tar
 .history
+**/__pycache__
+*.pt
