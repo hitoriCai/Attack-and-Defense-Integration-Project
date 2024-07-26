@@ -13,7 +13,7 @@ from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 sys.path.append('../models')
 sys.path.append('../dataset')
-from models import resnet18, NormalizeByChannelMeanStd, ProcessedModel
+from models import resnet152, resnet18,resnet101, NormalizeByChannelMeanStd, ProcessedModel
 from dataset import get_dataloader_from_args
 import torch
 import torch.nn as nn
@@ -168,8 +168,14 @@ def main_worker(gpu, ngpus_per_node, args):
     #     print("=> creating model '{}'".format(args.arch))
     #     model = models.__dict__[args.arch]()
     '''-------------------------------------------------'''
-    
-    base_model = resnet18()
+    if args.arch == "resnet18":    
+        base_model = resnet18()
+    elif args.arch == "resnet152":
+        base_model= resnet152()
+    elif args.arch == "resnet101":
+        base_model= resnet101()
+    else:
+        _ = 1/0
     data_normalizer = NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     model = ProcessedModel(base_model, data_normalize=data_normalizer)   
 
@@ -252,10 +258,10 @@ def main_worker(gpu, ngpus_per_node, args):
         adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
-        train_loss, train_acc, arr_time = train(train_loader, model, criterion, optimizer, epoch, args, ngpus_per_node, train_loss, train_acc, test_loss, test_acc, arr_time, sample_idx)
+        train_loss, train_acc, arr_time,sample_idx = train(train_loader, model, criterion, optimizer, epoch, args, ngpus_per_node, train_loss, train_acc, test_loss, test_acc, arr_time, sample_idx)
 
         # evaluate on validation set
-        acc1, test_acc, test_loss = validate(val_loader, model, criterion, args)
+        acc1, test_acc, test_loss = validate(val_loader, model, criterion, args,train_loss, train_acc, test_loss, test_acc, arr_time)
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
