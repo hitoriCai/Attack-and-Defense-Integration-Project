@@ -105,9 +105,8 @@ def start_ddp(parser):
     args = parser.parse_args()
 
     
-    save_dir = 'save_' + args.arch 
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+    if not os.path.exists(args.save_dir):
+        os.makedirs(args.save_dir)
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -145,7 +144,6 @@ def main_worker(gpu, ngpus_per_node, args):
     train_loss, train_acc, test_loss, test_acc, arr_time = [], [], [], [],[]
     sample_idx = 0
     best_acc1 = 0
-    sample_idx = 0
     args.gpu = gpu
 
     if args.gpu is not None:

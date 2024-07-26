@@ -33,7 +33,7 @@ model_names = sorted(name for name in t_models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(t_models.__dict__[name]))
 
-def get_parser_fgsm():
+def get_parser_normal():
 
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
     parser.add_argument('data', metavar='DIR',
@@ -43,6 +43,8 @@ def get_parser_fgsm():
                         help='model architecture: ' +
                             ' | '.join(model_names) +
                             ' (default: resnet18)')
+    parser.add_argument('--save_dir', metavar='save_dir', default="save_model", 
+                        help="where to save the checkpoints")
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
     parser.add_argument('--epochs', default=90, type=int, metavar='N',
@@ -102,14 +104,12 @@ def get_model_param_vec(model):
         vec.append(param.detach().cpu().reshape(-1).numpy())
     return np.concatenate(vec, 0)
 
-def start_ddp_fgsm(parser):
+def start_ddp(parser):
     
     args = parser.parse_args()
 
-    
-    save_dir = f'fgsm-at@eps:{args.eps}_save_' + args.arch 
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+    if not os.path.exists(args.save_dir):
+        os.makedirs(args.save_dir)
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -145,7 +145,6 @@ def start_ddp_fgsm(parser):
 
 def main_worker(gpu, ngpus_per_node, args):
     train_loss, train_acc, test_loss, test_acc, arr_time = [], [], [], [],[]
-    sample_idx = 0
     best_acc1 = 0
     sample_idx = 0
     args.gpu = gpu
@@ -244,6 +243,7 @@ def main_worker(gpu, ngpus_per_node, args):
             print("=> no checkpoint found at '{}'".format(args.resume))
 
     cudnn.benchmark = True
+    local_rank = args.rank % ngpus_per_node
 
     # Data loading code
     train_sampler, train_loader, val_loader = get_dataloader_from_args(args)
@@ -252,25 +252,25 @@ def main_worker(gpu, ngpus_per_node, args):
         validate(val_loader, model, criterion, args)
         return
 
-    if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-        torch.save(model.state_dict(), f'fgsm-at@eps:{args.eps}_save_' + args.arch  + '/' + str(sample_idx)+'.pt')
+    if not args.multiprocessing_distributed or (args.multiprocessing_distributed and local_rank == 0):
+        torch.save(model.state_dict(), os.path.join([args.save_dir, f"{sample_idx}.pt"]))
     
     
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
         adjust_learning_rate(optimizer, epoch, args)
-        print(f"Training at epoch {epoch}")
+        if local_rank == 0: print(f"Training at epoch {epoch}")
 
         # train for one epoch
         train_loss, train_acc, arr_time,sample_idx = train(train_loader, model, criterion, optimizer, epoch, args, ngpus_per_node, train_loss, train_acc, test_loss, test_acc, arr_time, sample_idx, args.eps/255.)
 
         # evaluate on validation set
-        acc1, test_acc, test_loss = validate(val_loader, model, criterion, args,train_loss, train_acc, test_loss, test_acc, arr_time, local_rank=args.rank)
-        
-        validate_robustness(val_loader, model, criterion, args,train_loss, train_acc, test_loss, test_acc, arr_time, eps=8/255., iters=4, alpha=8/255/2., local_rank=args.rank)
-        
-        validate_robustness(val_loader, model, criterion, args,train_loss, train_acc, test_loss, test_acc, arr_time, eps=args.eps/255., iters=4, alpha=args.eps/255/2., local_rank=args.rank)
+        acc1, test_acc, test_loss = validate(val_loader, model, criterion, args,train_loss, train_acc, test_loss, test_acc, arr_time, local_rank=local_rank)
+        if args.eps>0:
+            validate_robustness(val_loader, model, criterion, args,train_loss, train_acc, test_loss, test_acc, arr_time, eps=8/255., iters=4, alpha=8/255/2., local_rank=local_rank)
+            
+            validate_robustness(val_loader, model, criterion, args,train_loss, train_acc, test_loss, test_acc, arr_time, eps=args.eps/255., iters=4, alpha=args.eps/255/2., local_rank=local_rank)
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -284,7 +284,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 'state_dict': model.state_dict(),
                 'best_acc1': best_acc1,
                 'optimizer' : optimizer.state_dict(),
-            }, is_best)
+            }, is_best, args.save_dir)
 
     print ('train loss: ', train_loss)
     print ('train acc: ', train_acc)
@@ -321,15 +321,16 @@ def train(train_loader, model, criterion, optimizer, epoch, args, ngpus_per_node
         if torch.cuda.is_available():
             target = target.cuda(args.gpu, non_blocking=True)
 
-        delta_x = torch.empty_like(images).uniform_(-eps,eps).requires_grad_(True)
-        model.eval()
-        output = model(images+delta_x)
-        loss = criterion(output, target)
-        loss.backward()
-        delta_x.data = torch.clamp(delta_x.data + delta_x.grad.sign()*eps, -eps, eps)
-        images.data = torch.clamp(images.data + delta_x.data, 0., 1.)
-        delta_x.grad = None
-        model.train()
+        if eps>0:
+            delta_x = torch.empty_like(images).uniform_(-eps,eps).requires_grad_(True)
+            model.eval()
+            output = model(images+delta_x)
+            loss = criterion(output, target)
+            loss.backward()
+            delta_x.data = torch.clamp(delta_x.data + delta_x.grad.sign()*eps, -eps, eps)
+            images.data = torch.clamp(images.data + delta_x.data, 0., 1.)
+            delta_x.grad = None
+            model.train()
         
         # compute output
         output = model(images)
@@ -349,12 +350,12 @@ def train(train_loader, model, criterion, optimizer, epoch, args, ngpus_per_node
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed 
                 and args.rank % ngpus_per_node == 0):
             
-            if i % args.print_freq == 0:
+            if (i+1) % args.print_freq == 0:
                 progress.display(i)
 
             if i > 0 and i % 1000 == 0 and i < 5000:
                 sample_idx += 1
-                torch.save(model.state_dict(), f'fgsm-at@eps:{args.eps}_save_' + args.arch  + '/'+str(sample_idx)+'.pt')
+                torch.save(model.state_dict(), os.path.join([args.save_dir, f"{sample_idx}.pt"]))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -363,7 +364,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args, ngpus_per_node
     if not args.multiprocessing_distributed or (args.multiprocessing_distributed 
             and args.rank % ngpus_per_node == 0):
         sample_idx += 1
-        torch.save(model.state_dict(), f'fgsm-at@eps:{args.eps}_save_' + args.arch  + '/'+str(sample_idx)+'.pt')
+        torch.save(model.state_dict(), os.path.join([args.save_dir, f"{sample_idx}.pt"]))
     
     arr_time.append(time.time() - epoch_start)
     train_loss.append(losses.avg)
@@ -474,11 +475,10 @@ def validate_robustness(val_loader, model, criterion, args, train_loss, train_ac
     return top1.avg, test_acc, test_loss
 
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
-    return
-    torch.save(state, filename)
+def save_checkpoint(state, is_best, save_dir, filename='checkpoint.pt'):
+    torch.save(state, os.path.join([save_dir, filename]))
     if is_best:
-        shutil.copyfile(filename, 'model_best.pth.tar')
+        shutil.copyfile(os.path.join([save_dir, filename]), os.path.join([save_dir, 'model_best.pth']))
 
 
 class AverageMeter(object):
@@ -548,5 +548,5 @@ def accuracy(output, target, topk=(1,)):
 
 
 if __name__ == '__main__':
-    parser = get_parser_fgsm()
-    start_ddp_fgsm(parser)
+    parser = get_parser_normal()
+    start_ddp(parser)
