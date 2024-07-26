@@ -4,6 +4,9 @@ import os
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 import torch
+import random
+import numpy as np
+import sys
 
 class ImageNetLoader:
     def __init__(self, data_dir, batch_size=32, train=True, num_workers=4, shuffle=True, transform=None):
@@ -69,9 +72,9 @@ def get_dataloader_from_args(args):
         num_workers=args.workers, pin_memory=True)
     return train_sampler, train_loader, val_loader
 
-def get_imagenet_dataset():
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
+def get_imagenet_dataset(args):
+    traindir = os.path.join('/opt/data/common/ILSVRC2012/', 'train')
+    valdir = os.path.join('/opt/data/common/ILSVRC2012/', 'val')
     # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
     #                                 std=[0.229, 0.224, 0.225])
 

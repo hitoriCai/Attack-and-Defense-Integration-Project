@@ -13,7 +13,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 import numpy as np
-from utils import get_imagenet_dataset, get_model, set_seed, adjust_learning_rate, bn_update, eval_model, Logger
+# from utils import get_imagenet_dataset, get_model, set_seed, adjust_learning_rate, bn_update, eval_model, Logger
 
 sys.path.append('../models')
 sys.path.append('../dataset')
@@ -129,7 +129,9 @@ def update_param(model, param_vec):
         param.data = param_vec[idx:idx+size].reshape(arr_shape).clone()
         idx += size
 
-def main(args):
+def main(praser):
+    args = parser.parse_args()
+    set_seed(args.randomseed)
     # DDP initialize backend
     torch.cuda.set_device(args.local_rank)
     dist.init_process_group(backend='nccl')
@@ -154,8 +156,9 @@ def main(args):
     # Define model
     base_model = resnet18()
     data_normalizer = NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    model = ProcessedModel(base_model, data_normalize=data_normalizer) 
+    # model = ProcessedModel(base_model, data_normalize=data_normalizer) 
     # model = get_model(args).to(device)
+    model = ProcessedModel(base_model, data_normalize=data_normalizer).to(device)  # Move model to the device
     model = DDP(model, device_ids=[args.local_rank], output_device=args.local_rank)
     cudnn.benchmark = True
 
@@ -175,7 +178,7 @@ def main(args):
                     milestones=[args.epochs + 1], last_epoch=args.start_epoch - 1)
     
     # Prepare Dataloader
-    train_dataset, val_dataset = get_imagenet_dataset()
+    train_dataset, val_dataset = get_imagenet_dataset(args)
     assert args.batch_size % world_size == 0, f"Batch size {args.batch_size} cannot be divided evenly by world size {world_size}"
     batch_size_per_GPU = args.batch_size // world_size
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -240,7 +243,7 @@ def main(args):
             print('train start:', args.train_start)
 
     if args.evaluate:
-        validate(val_loader, model, criterion)
+        validate(val_loader, model, criterion, args)
         return
 
     if dist.get_rank() == 0:
@@ -261,7 +264,7 @@ def main(args):
             lr_scheduler.step()
 
         # Evaluate on validation set
-        test_loss, test_prec1 = validate(val_loader, model, criterion, device, world_size)
+        test_loss, test_prec1 = validate(val_loader, model, criterion, device, args, world_size)
         his_test_loss.append(test_loss)
         his_test_acc.append(test_prec1)
 
@@ -353,7 +356,7 @@ def project_gradient(model, P):
 
     update_grad(model, grad_proj.reshape(-1))
 
-def validate(val_loader, model, criterion, device, world_size=1):
+def validate(val_loader, model, criterion, device, args, world_size=1):
     # Run evaluation 
 
     batch_time = AverageMeter()
@@ -442,6 +445,4 @@ def accuracy(output, target, topk=(1,)):
 
 if __name__ == '__main__':
     parser = get_parser()
-    args = parser.parse_args()
-    set_seed(args.randomseed)
-    main(args)
+    main(parser)
