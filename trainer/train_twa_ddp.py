@@ -1,55 +1,44 @@
 import argparse
-import os
-import random
-import shutil
 import time
-import warnings
 import os
 import sys
-import numpy as np
-import pickle
 
-
-from PIL import Image, ImageFile
-ImageFile.LOAD_TRUNCATED_IMAGES = True
-sys.path.append('../models')
-sys.path.append('../dataset')
-from models import resnet18, NormalizeByChannelMeanStd, ProcessedModel
-from dataset import get_dataloader_from_args
 import torch
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
-import torch.distributed as dist
 import torch.optim as optim
 import torch.utils.data
-import torch.utils.data.distributed
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-import torchvision.models as t_models
-
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-model_names = sorted(name for name in t_models.__dict__
-    if name.islower() and not name.startswith("__")
-    and callable(t_models.__dict__[name]))
+import numpy as np
+# from utils import get_imagenet_dataset, get_model, set_seed, adjust_learning_rate, bn_update, eval_model, Logger
 
+sys.path.append('../models')
+sys.path.append('../dataset')
+from models import resnet18, NormalizeByChannelMeanStd, ProcessedModel
+from dataset import get_dataloader_from_args, set_seed, adjust_learning_rate, Logger, get_imagenet_dataset
+
+from PIL import Image, ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+########################## parse arguments ##########################
 def get_parser():
-    ########################## parse arguments ##########################
+
     parser = argparse.ArgumentParser(description='TWA ddp')
     parser.add_argument('--EXP', metavar='EXP', help='experiment name', default='P-SGD')
     parser.add_argument('--arch', '-a', metavar='ARCH', default='VGG16BN',
                         help='model architecture (default: VGG16BN)')
-    parser.add_argument('--datasets', metavar='DATASETS', default='resnet18', type=str,
+    parser.add_argument('--datasets', metavar='DATASETS', default='CIFAR10', type=str,
                         help='The training datasets')
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
-    parser.add_argument('--epochs', default=90, type=int, metavar='N',
+    parser.add_argument('--epochs', default=100, type=int, metavar='N',
                         help='number of total epochs to run')
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
-    parser.add_argument('-b', '--batch-size', default=256, type=int,
+    parser.add_argument('-b', '--batch-size', default=128, type=int,
                         metavar='N', help='mini-batch size (default: 128)')
     parser.add_argument('--weight-decay', '--wd', default=1e-5, type=float,
                         metavar='W', help='weight decay (default: 1e-4)')
@@ -140,10 +129,9 @@ def update_param(model, param_vec):
         param.data = param_vec[idx:idx+size].reshape(arr_shape).clone()
         idx += size
 
-def start_ddp(parser):
+def main(praser):
     args = parser.parse_args()
     set_seed(args.randomseed)
-
     # DDP initialize backend
     torch.cuda.set_device(args.local_rank)
     dist.init_process_group(backend='nccl')
@@ -168,19 +156,11 @@ def start_ddp(parser):
     # Define model
     base_model = resnet18()
     data_normalizer = NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    model = ProcessedModel(base_model, data_normalize=data_normalizer)   
-
+    # model = ProcessedModel(base_model, data_normalize=data_normalizer) 
     # model = get_model(args).to(device)
-    # create model
-    # if args.pretrained:
-    #     print("=> using pre-trained model '{}'".format(args.arch))
-    #     model = resnet18
-    # else:
-    #     print("=> creating model '{}'".format(args.arch))
-    #     model = resnet18
+    model = ProcessedModel(base_model, data_normalize=data_normalizer).to(device)  # Move model to the device
     model = DDP(model, device_ids=[args.local_rank], output_device=args.local_rank)
     cudnn.benchmark = True
-
 
     # Define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().to(device)    
@@ -198,22 +178,19 @@ def start_ddp(parser):
                     milestones=[args.epochs + 1], last_epoch=args.start_epoch - 1)
     
     # Prepare Dataloader
-    # train_dataset, val_dataset = get_imagenet_dataset()
-    train_sampler, train_loader, val_loader = get_dataloader_from_args(args)
-
+    train_dataset, val_dataset = get_imagenet_dataset(args)
     assert args.batch_size % world_size == 0, f"Batch size {args.batch_size} cannot be divided evenly by world size {world_size}"
     batch_size_per_GPU = args.batch_size // world_size
-    # train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    # val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset)
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset)
 
-    # train_loader = torch.utils.data.DataLoader(
-    #     train_dataset, batch_size=batch_size_per_GPU, sampler=train_sampler,
-    #     num_workers=args.workers, pin_memory=True)
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=batch_size_per_GPU, sampler=train_sampler,
+        num_workers=args.workers, pin_memory=True)
 
-    # val_loader = torch.utils.data.DataLoader(
-    #     val_dataset, batch_size=batch_size_per_GPU, sampler=val_sampler,
-    #     num_workers=args.workers)
-
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset, batch_size=batch_size_per_GPU, sampler=val_sampler,
+        num_workers=args.workers)
 
     args.total_iters = len(train_loader) * args.epochs
     args.current_iters = 0
@@ -266,7 +243,7 @@ def start_ddp(parser):
             print('train start:', args.train_start)
 
     if args.evaluate:
-        validate(val_loader, model, criterion)
+        validate(val_loader, model, criterion, args)
         return
 
     if dist.get_rank() == 0:
@@ -287,7 +264,7 @@ def start_ddp(parser):
             lr_scheduler.step()
 
         # Evaluate on validation set
-        test_loss, test_prec1 = validate(val_loader, model, criterion, device, world_size)
+        test_loss, test_prec1 = validate(val_loader, model, criterion, device, args, world_size)
         his_test_loss.append(test_loss)
         his_test_acc.append(test_prec1)
 
@@ -379,7 +356,7 @@ def project_gradient(model, P):
 
     update_grad(model, grad_proj.reshape(-1))
 
-def validate(val_loader, model, criterion, device, world_size=1):
+def validate(val_loader, model, criterion, device, args, world_size=1):
     # Run evaluation 
 
     batch_time = AverageMeter()
@@ -467,6 +444,5 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 if __name__ == '__main__':
-    # main(args)
     parser = get_parser()
-    start_ddp(parser)
+    main(parser)
