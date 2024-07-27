@@ -5,8 +5,8 @@ import torch.nn as nn
 import torch.backends.cudnn as cudnn
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-from torch.utils.data import DataLoader
-from models import resnet18  
+from models import resnet18, NormalizeByChannelMeanStd, ProcessedModel
+from torch.utils.data import DataLoader 
 
 def evaluate_model(model, dataloader, criterion, device):
     model.eval()
@@ -30,6 +30,14 @@ def evaluate_model(model, dataloader, criterion, device):
 
     return avg_loss, accuracy
 
+def remove_module_prefix(state_dict):
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith('module.'):
+            new_state_dict[k[7:]] = v  # remove 'module.' prefix
+        else:
+            new_state_dict[k] = v
+    return new_state_dict
 
 def main():
     parser = argparse.ArgumentParser(description='Evaluate model accuracy')
@@ -51,7 +59,9 @@ def main():
     # Load model weights
     if os.path.isfile(args.model_path):
         print(f"Loading model from '{args.model_path}'")
-        model.load_state_dict(torch.load(args.model_path, map_location=device))
+        state_dict = torch.load(args.model_path, map_location=device)
+        state_dict = remove_module_prefix(state_dict)
+        model.load_state_dict(state_dict)
     else:
         print(f"No model found at '{args.model_path}'")
         return
