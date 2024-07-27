@@ -199,7 +199,7 @@ import torch.backends.cudnn as cudnn
 
 sys.path.append('../models')
 sys.path.append('../dataset')
-from models import resnet18, NormalizeByChannelMeanStd, ProcessedModel
+from models import resnet101, NormalizeByChannelMeanStd, ProcessedModel
 from dataset import get_imagenet_dataset, set_seed, Logger
 
 from PIL import ImageFile
@@ -211,8 +211,8 @@ def get_parser():
     parser = argparse.ArgumentParser(description='test_acc')
     parser.add_argument('--data', metavar='DIR', required=True,
                         help='path to dataset')
-    parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet18',
-                        help='model architecture (default: resnet18)')
+    parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet101',
+                        help='model architecture (default: resnet101)')
     parser.add_argument('--datasets', metavar='DATASETS', default='Imagenet', type=str,
                         help='The training datasets')
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
@@ -235,7 +235,7 @@ def get_parser():
 
 
 def load_model(filepath, device):
-    model = ProcessedModel(resnet18(), NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+    model = ProcessedModel(resnet101(), NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
     checkpoint = torch.load(filepath, map_location=device)
     
     # Remove 'module.' prefix
