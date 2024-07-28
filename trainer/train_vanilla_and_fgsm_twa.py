@@ -17,11 +17,18 @@ import numpy as np
 
 sys.path.append('../models')
 sys.path.append('../dataset')
-from models import resnet18, NormalizeByChannelMeanStd, ProcessedModel
+from models import resnet18, resnet152, resnet101, NormalizeByChannelMeanStd, ProcessedModel
 from dataset import get_dataloader_from_args, set_seed, adjust_learning_rate, Logger, get_imagenet_dataset
+import torchvision.models as t_models
 
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+
+model_names = sorted(name for name in t_models.__dict__
+    if name.islower() and not name.startswith("__")
+    and callable(t_models.__dict__[name]))
+
 
 ########################## parse arguments ##########################
 def get_parser():
@@ -90,7 +97,7 @@ def get_parser():
     parser.add_argument('--lr', default=1, type=float, metavar='N',
                         help='lr for PSGD')
     # ddp
-    parser.add_argument("--rank", default=-1, type=int)
+    parser.add_argument("--local_rank", default=-1, type=int)
 
     return parser
 
@@ -141,14 +148,19 @@ def update_param(model, param_vec):
         param.data = param_vec[idx:idx+size].reshape(arr_shape).clone()
         idx += size
 
-def main(praser):
+def main(parser):
     args = parser.parse_args()
     set_seed(args.randomseed)
+    # 检查 CUDA 设备数量
+    num_gpus = torch.cuda.device_count()
+    if args.local_rank >= num_gpus or args.local_rank < 0:
+        raise ValueError(f"Invalid device ordinal: {args.local_rank}. Only {num_gpus} GPUs available.")
+
     # DDP initialize backend
-    torch.cuda.set_device(args.rank)
+    torch.cuda.set_device(args.local_rank)
     dist.init_process_group(backend='nccl')
     world_size = torch.distributed.get_world_size()
-    device = torch.device("cuda", args.rank)
+    device = torch.device("cuda", args.local_rank)
     dist.barrier() # Synchronizes all processes
 
     if dist.get_rank() == 0:
@@ -177,10 +189,10 @@ def main(praser):
     data_normalizer = NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
   
     model = ProcessedModel(base_model, data_normalize=data_normalizer).to(device)  # Move model to the device
-    model = DDP(model, device_ids=[args.rank], output_device=args.rank)
+    model = DDP(model, device_ids=[args.local_rank], output_device=args.local_rank)
     cudnn.benchmark = True
     ngpus_per_node = torch.cuda.device_count()
-    local_rank = args.rank % ngpus_per_node
+    rank = args.local_rank % ngpus_per_node
     print("Model DDP Finished")
 
     # Define loss function (criterion) and optimizer
@@ -333,14 +345,14 @@ def train(train_loader, model, criterion, optimizer, args, epoch, P, device, wor
         reduce_value(batch_size)
         count += batch_size
 
-        if eps>0:
-            delta_x = torch.empty_like(images).uniform_(-eps,eps).requires_grad_(True)
+        if args.eps>0:
+            delta_x = torch.empty_like(input).uniform_(-args.eps,args.eps).requires_grad_(True)
             model.eval()
-            output = model(images+delta_x)
+            output = model(input+delta_x)
             loss = criterion(output, target)
             loss.backward()
-            delta_x.data = torch.clamp(delta_x.data + delta_x.grad.sign()*eps, -eps, eps)
-            images.data = torch.clamp(images.data + delta_x.data, 0., 1.)
+            delta_x.data = torch.clamp(delta_x.data + delta_x.grad.sign()*args.eps, -args.eps, args.eps)
+            input.data = torch.clamp(input.data + delta_x.data, 0., 1.)
             delta_x.grad = None
             model.train()
 
@@ -444,7 +456,7 @@ def validate(val_loader, model, criterion, device, args, world_size=1):
 
     return losses.avg, correctes/count*100
 
-def validate_robustness(val_loader, model, criterion, args, train_loss, train_acc, test_loss, test_acc, arr_time, eps, iters, alpha, local_rank):
+def validate_robustness(val_loader, model, criterion, args, train_loss, train_acc, test_loss, test_acc, arr_time, eps, iters, alpha, rank):
      
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
@@ -493,7 +505,7 @@ def validate_robustness(val_loader, model, criterion, args, train_loss, train_ac
             progress.display(i)
 
     # TODO: this should also be done with the ProgressMeter
-    if local_rank==0: print("Robust Acc@eps={}/255".format(int(eps*255)) + ' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
+    if rank==0: print("Robust Acc@eps={}/255".format(int(eps*255)) + ' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
             .format(top1=top1, top5=top5))
     test_acc.append(top1.avg)
     test_loss.append(losses.avg)
