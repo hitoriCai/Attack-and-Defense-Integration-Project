@@ -17,7 +17,7 @@ import numpy as np
 
 sys.path.append('../models')
 sys.path.append('../dataset')
-from models import resnet18, resnet101, NormalizeByChannelMeanStd, ProcessedModel
+from models import resnet18, NormalizeByChannelMeanStd, ProcessedModel
 from dataset import get_dataloader_from_args, set_seed, adjust_learning_rate, Logger, get_imagenet_dataset
 
 from PIL import Image, ImageFile
@@ -26,10 +26,13 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 ########################## parse arguments ##########################
 def get_parser():
 
-    parser = argparse.ArgumentParser(description='TWA ddp')
+    parser = argparse.ArgumentParser(description='PyTorch ImageNet TWA Training')
     parser.add_argument('--EXP', metavar='EXP', help='experiment name', default='P-SGD')
-    parser.add_argument('--arch', '-a', metavar='ARCH', default='VGG16BN',
-                        help='model architecture (default: VGG16BN)')
+    parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',
+                        choices=model_names,
+                        help='model architecture: ' +
+                            ' | '.join(model_names) +
+                            ' (default: resnet18)')
     parser.add_argument('--datasets', metavar='DATASETS', default='CIFAR10', type=str,
                         help='The training datasets')
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
@@ -50,19 +53,28 @@ def get_parser():
                         help='evaluate model on validation set')
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
+    parser.add_argument('--eps', default=4, type=int, metavar='N',
+                        help='epsilon for adversarial training')
     # env
     parser.add_argument('--randomseed', 
                         help='Randomseed for training and initialization',
                         type=int, default=1)           
     parser.add_argument('--save-dir', dest='save_dir',
                         help='The directory used to save the trained models',
-                        default='save_temp', type=str)
+                        default='save_model', type=str)
     parser.add_argument('--log-dir', dest='log_dir',
                         help='The directory used to save the log',
                         default='save_temp', type=str)
     parser.add_argument('--log-name', dest='log_name',
                         help='The log file name',
                         default='log', type=str)
+    parser.add_argument('--resume', default='', type=str, metavar='PATH',
+                        help='path to latest checkpoint (default: none)')
+    parser.add_argument('--multiprocessing-distributed', action='store_true',
+                        help='Use multi-processing distributed training to launch '
+                            'N processes per node, which has N GPUs. This is the '
+                            'fastest way to use PyTorch for either single node or '
+                            'multi node data parallel training')
     # project subspace setting 
     parser.add_argument('--params_start', default=0, type=int, metavar='N',
                         help='which idx start for project subspace') 
@@ -78,7 +90,7 @@ def get_parser():
     parser.add_argument('--lr', default=1, type=float, metavar='N',
                         help='lr for PSGD')
     # ddp
-    parser.add_argument("--local_rank", default=-1, type=int)
+    parser.add_argument("--rank", default=-1, type=int)
 
     return parser
 
@@ -129,14 +141,14 @@ def update_param(model, param_vec):
         param.data = param_vec[idx:idx+size].reshape(arr_shape).clone()
         idx += size
 
-def main(parser):
+def main(praser):
     args = parser.parse_args()
     set_seed(args.randomseed)
     # DDP initialize backend
-    torch.cuda.set_device(args.local_rank)
+    torch.cuda.set_device(args.rank)
     dist.init_process_group(backend='nccl')
     world_size = torch.distributed.get_world_size()
-    device = torch.device("cuda", args.local_rank)
+    device = torch.device("cuda", args.rank)
     dist.barrier() # Synchronizes all processes
 
     if dist.get_rank() == 0:
@@ -154,7 +166,6 @@ def main(parser):
         print('log dir:', args.log_dir)
     
     # Define model
-    # Define model
     if args.arch == "resnet18":    
         base_model = resnet18()
     elif args.arch == "resnet152":
@@ -164,11 +175,13 @@ def main(parser):
     else:
         _ = 1/0
     data_normalizer = NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    # model = ProcessedModel(base_model, data_normalize=data_normalizer) 
-    # model = get_model(args).to(device)
+  
     model = ProcessedModel(base_model, data_normalize=data_normalizer).to(device)  # Move model to the device
-    model = DDP(model, device_ids=[args.local_rank], output_device=args.local_rank)
+    model = DDP(model, device_ids=[args.rank], output_device=args.rank)
     cudnn.benchmark = True
+    ngpus_per_node = torch.cuda.device_count()
+    local_rank = args.rank % ngpus_per_node
+    print("Model DDP Finished")
 
     # Define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().to(device)    
@@ -184,7 +197,7 @@ def main(parser):
     elif args.schedule == 'constant' or args.schedule == 'linear':
         lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, \
                     milestones=[args.epochs + 1], last_epoch=args.start_epoch - 1)
-    print(args.batch_size)
+    
     # Prepare Dataloader
     train_dataset, val_dataset = get_imagenet_dataset(args)
     assert args.batch_size % world_size == 0, f"Batch size {args.batch_size} cannot be divided evenly by world size {world_size}"
@@ -273,6 +286,10 @@ def main(parser):
 
         # Evaluate on validation set
         test_loss, test_prec1 = validate(val_loader, model, criterion, device, args, world_size)
+        if args.eps>0:
+            validate_robustness(val_loader, model, criterion, args,train_loss, train_acc, test_loss, test_acc, arr_time, eps=8/255., iters=4, alpha=8/255/2., rank=rank)
+            
+            validate_robustness(val_loader, model, criterion, args,train_loss, train_acc, test_loss, test_acc, arr_time, eps=args.eps/255., iters=4, alpha=args.eps/255/2., rank=rank)
         his_test_loss.append(test_loss)
         his_test_acc.append(test_prec1)
 
@@ -315,6 +332,17 @@ def train(train_loader, model, criterion, optimizer, args, epoch, P, device, wor
         batch_size = torch.tensor(target.size(0)).to(device)
         reduce_value(batch_size)
         count += batch_size
+
+        if eps>0:
+            delta_x = torch.empty_like(images).uniform_(-eps,eps).requires_grad_(True)
+            model.eval()
+            output = model(images+delta_x)
+            loss = criterion(output, target)
+            loss.backward()
+            delta_x.data = torch.clamp(delta_x.data + delta_x.grad.sign()*eps, -eps, eps)
+            images.data = torch.clamp(images.data + delta_x.data, 0., 1.)
+            delta_x.grad = None
+            model.train()
 
         # Compute output
         output = model(input)
@@ -415,6 +443,61 @@ def validate(val_loader, model, criterion, device, args, world_size=1):
     print(f' * Prec@1 {correctes/count*100:.3f}')
 
     return losses.avg, correctes/count*100
+
+def validate_robustness(val_loader, model, criterion, args, train_loss, train_acc, test_loss, test_acc, arr_time, eps, iters, alpha, local_rank):
+     
+    batch_time = AverageMeter('Time', ':6.3f')
+    losses = AverageMeter('Loss', ':.4e')
+    top1 = AverageMeter('Acc@1', ':6.2f')
+    top5 = AverageMeter('Acc@5', ':6.2f')
+    progress = ProgressMeter(
+        len(val_loader),
+        [batch_time, losses, top1, top5],
+        prefix='Test: ')
+
+    # switch to evaluate mode
+    model.eval()
+
+    
+    end = time.time()
+    for i, (images, target) in enumerate(val_loader):
+        if args.gpu is not None:
+            images = images.cuda(args.gpu, non_blocking=True)
+        if torch.cuda.is_available():
+            target = target.cuda(args.gpu, non_blocking=True)
+        
+        delta_x = torch.empty_like(images).uniform_(-eps,eps).requires_grad_(True)
+        for i in range(iters):
+            output = model(images+delta_x)
+            loss = criterion(output, target)
+            loss.backward()
+            delta_x.data = torch.clamp(delta_x.data + delta_x.grad.sign()*alpha, -eps, eps)
+        images.data = torch.clamp(images.data + delta_x.data, 0., 1.)
+        delta_x.grad = None
+
+        # compute output
+        output = model(images)
+        loss = criterion(output, target)
+
+        # measure accuracy and record loss
+        acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        losses.update(loss.item(), images.size(0))
+        top1.update(acc1[0], images.size(0))
+        top5.update(acc5[0], images.size(0))
+
+        # measure elapsed time
+        batch_time.update(time.time() - end)
+        end = time.time()
+
+        if (i+1) % args.print_freq == 0:
+            progress.display(i)
+
+    # TODO: this should also be done with the ProgressMeter
+    if local_rank==0: print("Robust Acc@eps={}/255".format(int(eps*255)) + ' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
+            .format(top1=top1, top5=top5))
+    test_acc.append(top1.avg)
+    test_loss.append(losses.avg)
+    return top1.avg, test_acc, test_loss
 
 
 class AverageMeter(object):
