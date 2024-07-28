@@ -1,5 +1,5 @@
 # main.py
-from trainer.dldr import main
-
+from trainer.train_twa_ddp import get_parser,  main
 if __name__ == '__main__':
-    main()
+    parser = get_parser()
+    main(parser)
