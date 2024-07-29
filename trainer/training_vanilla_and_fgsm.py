@@ -253,7 +253,7 @@ def main_worker(gpu, ngpus_per_node, args):
         return
 
     if not args.multiprocessing_distributed or (args.multiprocessing_distributed and local_rank == 0):
-        torch.save(model.state_dict(), os.path.join([args.save_dir, f"{sample_idx}.pt"]))
+        torch.save(model.state_dict(), os.path.join(args.save_dir, f"{sample_idx}.pt"))
     
     
     for epoch in range(args.start_epoch, args.epochs):
@@ -320,7 +320,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args, ngpus_per_node
             images = images.cuda(args.gpu, non_blocking=True)
         if torch.cuda.is_available():
             target = target.cuda(args.gpu, non_blocking=True)
-
+        
         if eps>0:
             delta_x = torch.empty_like(images).uniform_(-eps,eps).requires_grad_(True)
             model.eval()
@@ -355,7 +355,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args, ngpus_per_node
 
             if i > 0 and i % 1000 == 0 and i < 5000:
                 sample_idx += 1
-                torch.save(model.state_dict(), os.path.join([args.save_dir, f"{sample_idx}.pt"]))
+                torch.save(model.state_dict(), os.path.join(args.save_dir, f"{sample_idx}.pt"))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -364,7 +364,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args, ngpus_per_node
     if not args.multiprocessing_distributed or (args.multiprocessing_distributed 
             and args.rank % ngpus_per_node == 0):
         sample_idx += 1
-        torch.save(model.state_dict(), os.path.join([args.save_dir, f"{sample_idx}.pt"]))
+        torch.save(model.state_dict(), os.path.join(args.save_dir, f"{sample_idx}.pt"))
     
     arr_time.append(time.time() - epoch_start)
     train_loss.append(losses.avg)
@@ -447,12 +447,14 @@ def validate_robustness(val_loader, model, criterion, args, train_loss, train_ac
             loss = criterion(output, target)
             loss.backward()
             delta_x.data = torch.clamp(delta_x.data + delta_x.grad.sign()*alpha, -eps, eps)
+            delta_x.grad = None
         images.data = torch.clamp(images.data + delta_x.data, 0., 1.)
         delta_x.grad = None
-
+        delta_x.requires_grad=False
+        with torch.no_grad():
         # compute output
-        output = model(images)
-        loss = criterion(output, target)
+            output = model(images)
+            loss = criterion(output, target)
 
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -476,9 +478,9 @@ def validate_robustness(val_loader, model, criterion, args, train_loss, train_ac
 
 
 def save_checkpoint(state, is_best, save_dir, filename='checkpoint.pt'):
-    torch.save(state, os.path.join([save_dir, filename]))
+    torch.save(state, os.path.join(save_dir, filename))
     if is_best:
-        shutil.copyfile(os.path.join([save_dir, filename]), os.path.join([save_dir, 'model_best.pth']))
+        shutil.copyfile(os.path.join(save_dir, filename), os.path.join(save_dir, 'model_best.pth'))
 
 
 class AverageMeter(object):
