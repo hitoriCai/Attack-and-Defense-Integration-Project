@@ -231,7 +231,7 @@ def main(parser):
         print('params: from', args.params_start, 'to', args.params_end)
     W = []
     for i in range(args.params_start, args.params_end):
-        if i%2==1: continue 
+        if i%2==1: continue
         model.load_state_dict(torch.load(os.path.join(args.save_dir, f'{i}.pt')))
         W.append(get_model_param_vec_torch(model))
     W = torch.stack(W, dim=0)
@@ -486,7 +486,6 @@ def validate(val_loader, model, criterion, device, args, world_size=1):
     return losses.avg, correctes/count*100
 
 def validate_robustness(val_loader, model, criterion, args, train_loss, his_train_acc, test_loss, his_test_acc, arr_time, eps, iters, alpha, rank):
-     
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
@@ -505,13 +504,13 @@ def validate_robustness(val_loader, model, criterion, args, train_loss, his_trai
             images = images.cuda(args.gpu, non_blocking=True)
         if torch.cuda.is_available():
             target = target.cuda(args.gpu, non_blocking=True)
-        
-        delta_x = torch.empty_like(images).uniform_(-eps,eps).requires_grad_(True)
-        for i in range(iters):
-            output = model(images+delta_x)
+
+        delta_x = torch.empty_like(images).uniform_(-eps, eps).requires_grad_(True)
+        for _ in range(iters):
+            output = model(images + delta_x)
             loss = criterion(output, target)
             loss.backward()
-            delta_x.data = torch.clamp(delta_x.data + delta_x.grad.sign()*alpha, -eps, eps)
+            delta_x.data = torch.clamp(delta_x.data + delta_x.grad.sign() * alpha, -eps, eps)
         images.data = torch.clamp(images.data + delta_x.data, 0., 1.)
         delta_x.grad = None
 
@@ -522,22 +521,28 @@ def validate_robustness(val_loader, model, criterion, args, train_loss, his_trai
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
         losses.update(loss.item(), images.size(0))
-        top1.update(acc1.item(), images.size(0))  # 修改这里
-        top5.update(acc5.item(), images.size(0))  # 修改这里
+        top1.update(acc1.item(), images.size(0))
+        top5.update(acc5.item(), images.size(0))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
 
-        if (i+1) % args.print_freq == 0:
+        if (i + 1) % args.print_freq == 0:
             progress.display(i)
 
     if rank == 0:
-        print("Robust Acc@eps={}/255".format(int(eps*255)) + ' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
+        print("Robust Acc@eps={}/255".format(int(eps * 255)) + ' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
-    his_test_acc.append(top1.avg)
-    test_loss.append(losses.avg)
+    
+    # Ensure test_loss and his_test_acc are lists before appending
+    if isinstance(test_loss, list):
+        test_loss.append(losses.avg)
+    if isinstance(his_test_acc, list):
+        his_test_acc.append(top1.avg)
+    
     return top1.avg, his_test_acc, test_loss
+
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
