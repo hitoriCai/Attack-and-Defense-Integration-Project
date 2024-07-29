@@ -478,7 +478,7 @@ class Square(Attack):
 # QueryAttack ##########################################################
 class QueryNet():
     def __init__(self, sampler, victim_name, surrogate_names, use_square_plus, use_square, use_nas, eps,
-                 batch_size): # delete l2_attack
+                 batch_size):
         self.surrogate_names = surrogate_names
         self.use_surrogate_attacker = self.surrogate_names != []
         self.use_square_plus = use_square_plus
@@ -503,8 +503,8 @@ class QueryNet():
         os.makedirs(self.save_surrogate_path)
 
         self.sampler = sampler
-        self.generator = PGDGeneratorInfty(int(batch_size / 2)) # if not l2_attack else PGDGenerator2(int(batch_size / 2))
-        self.square_attack = self.square_attack_linfty # if not l2_attack else self.square_attack_l2
+        self.generator = PGDGeneratorInfty(int(batch_size / 2))
+        self.square_attack = self.square_attack_linfty
         self.surrogates = []
         os.makedirs('query_attack_sub/pretrained', exist_ok=True)
         gpus = torch.cuda.device_count()
@@ -627,8 +627,17 @@ class QueryNet():
         s = min(max(s, 1), h - 1)  # at least c x 1 x 1 window is taken and at most c x h-1 x h-1
         center_h = np.random.randint(0, h - s)
         center_w = np.random.randint(0, w - s)
-        deltas[~is_candidate_maximizer, :, center_h:center_h + s, center_w:center_w + s] = np.random.choice(
-            [-self.eps, self.eps], size=[c, 1, 1])
+        if isinstance(deltas, torch.Tensor):
+            deltas = deltas.cpu().numpy() 
+        if isinstance(x_curr, torch.Tensor):
+            x_curr = x_curr.cpu().numpy() 
+        if isinstance(x_best_curr, torch.Tensor):
+            x_best_curr = x_best_curr.cpu().numpy() 
+        # 确保 deltas, x_curr 和 x_best_curr 不为 None
+        if deltas is None or x_curr is None or x_best_curr is None:
+            raise ValueError("deltas, x_curr, or x_best_curr is None after conversion to NumPy")
+
+        deltas[~is_candidate_maximizer, :, center_h:center_h + s, center_w:center_w + s] = np.random.choice([-self.eps, self.eps], size=[c, 1, 1])
 
         # judge overlap
         for i_img in range(x_best_curr.shape[0]):
@@ -646,16 +655,23 @@ class QueryNet():
                 center_h_tmp, center_w_tmp = np.random.randint(0, h - s_tmp), np.random.randint(0, w - s_tmp)
                 deltas[i_img, :, center_h_tmp:center_h_tmp + s_tmp,
                 center_w_tmp:center_w_tmp + s_tmp] = np.random.choice([-self.eps, self.eps], size=[c, 1, 1])
-        return np.clip(x_curr + deltas, min_val, max_val), deltas
+        result = np.clip(x_curr + deltas, min_val, max_val)
+        if deltas is None:
+            raise ValueError("None deltas square_linfty")
+        if result is None:
+            raise ValueError("None result square_linfty")
+        return result, deltas
 
     def square_attacker(self, x_curr, x_best_curr, **kwargs):
-        x_next, _ = self.square_attack(x_curr, x_best_curr, x_best_curr - x_curr,
-                                       np.zeros(x_best_curr.shape[0], dtype=np.bool), **kwargs)
+        x_next, _ = self.square_attack(x_curr, x_best_curr, x_best_curr - x_curr, np.zeros(x_best_curr.shape[0], dtype=np.bool), **kwargs)
         return x_next
 
     def square_plus_attacker(self, x_curr, x_best_curr, **kwargs):
         is_candidate_maximizer = np.zeros(x_best_curr.shape[0], dtype=np.bool)
         deltas = x_best_curr - x_curr
+        deltas = deltas.cpu().numpy()  ########
+        x_curr = x_curr.cpu().numpy()
+        x_best_curr = x_best_curr.cpu().numpy()
         for i in range(
                 self.square_plus_max_trial):  # retry random search for a maximum of self.square_plus_max_trial times
             x_next, deltas = self.square_attack(x_curr, x_best_curr, deltas, is_candidate_maximizer, **kwargs)
@@ -692,8 +708,7 @@ class QueryNet():
             iter_trained += 1
         if self.save_surrogate: self.surrogates[attacker_id].save(save_info)
         # FGSM attack
-        self.x_new_tmp[attacker_id] = self.generator(x_best_curr, x_curr, self.eps, self.surrogates[attacker_id],
-                                                     y_curr, targeted=targeted)
+        self.x_new_tmp[attacker_id] = self.generator(x_best_curr, x_curr, self.eps, self.surrogates[attacker_id], y_curr, targeted=targeted)
 
     def surrogate_attacker_multi_threading(self, x_curr, x_best_curr, y_curr, targeted, **kwargs):
         threads = []  # train and attack via different surrogates simultaneously
@@ -722,7 +737,7 @@ class QueryNet():
                 x_new_candidate.append(self.square_attacker(x_curr, x_best_curr, **kwargs))
             return x_new_candidate
 
-    def forward(self, x_curr, x_best_curr, y_curr, get_surrogate_loss, batch_size, **kwargs):
+    def forward(self, x_curr, x_best_curr, y_curr, get_surrogate_loss, **kwargs):
         x_new_candidate = self.yield_candidate_queries(x_curr, x_best_curr, y_curr, **kwargs)
         if len(x_new_candidate) == 1:
             return x_new_candidate[0], None  # max(w_{1~n}) < w_{n+1} < w_{n+2}, use square only
@@ -732,7 +747,7 @@ class QueryNet():
                 loss_candidate_for_one_attacker = []
                 for evaluator_id in range(len(self.surrogate_names)):
                     loss_candidate_for_one_attacker.append(
-                        get_surrogate_loss(self.surrogates[evaluator_id], x_new_candidate[attacker_id], y_curr, batch_size) *
+                        get_surrogate_loss(self.surrogates[evaluator_id], x_new_candidate[attacker_id], y_curr.cpu().numpy()) *
                         self.attacker_eva_weights[evaluator_id]
                     )
                 loss_candidate.append(sum(loss_candidate_for_one_attacker) / len(loss_candidate_for_one_attacker))
@@ -745,7 +760,7 @@ class QueryNet():
                 x_new[attacker_index] = x_new_candidate[attacker_id][attacker_index]
         return x_new, x_new_index
 
-    def backward(self, idx_improved, x_new_index, **kwargs):
+    def backward(self, idx_improved, x_new_index, **kwargs):  # 应该用的是cpu，因为update_buffer有np计算
         if self.use_surrogate_attacker:
             if self.use_square_plus or self.use_square:
                 save_only = max(self.attacker_eva_weights) == self.attacker_eva_weights[-1]
@@ -754,6 +769,7 @@ class QueryNet():
             else:
                 self.sampler.update_buffer(save_only=False, **kwargs)  # FGSM and Square+ require to update buffer
         elif self.use_square_plus:  # Square+ only, no surrogates
+            print("use square+")
             self.sampler.update_buffer(save_only=False, **kwargs)
             self.sampler.update_lipschitz()  # only do this for square+
         elif self.use_square:  # Square only, no surrogates
@@ -763,6 +779,7 @@ class QueryNet():
             return None  # Square, do nothing
 
         elif max(self.attacker_eva_weights) == self.attacker_eva_weights[-2]:  # Square+, Square
+            print("use square+, square")
             assert x_new_index.max() == 1 and self.use_square_plus and self.use_square  # only valid when they are both adopted
             attacker_selected = [0 for _ in range(len(self.surrogate_names))]
             for attacker_id in range(x_new_index.max() + 1):
@@ -825,7 +842,7 @@ class QueryNet():
 
 class PGDGeneratorInfty():
     def __init__(self, max_batch_size):
-        self.device = torch.device('cpu')
+        self.device = torch.device('cuda:0')
         self.criterion = torch.nn.CrossEntropyLoss()
         self.max_batch_size = max_batch_size
 
@@ -841,7 +858,7 @@ class PGDGeneratorInfty():
         momentum_grad = 0
         for i in range(num_iter):
             img.requires_grad = True
-            loss = self.criterion(surrogate(img, no_grad=False), lbl.argmax(dim=-1))
+            loss = self.criterion(surrogate(img, no_grad=False).float(), lbl.argmax(dim=-1))
             surrogate.surrogate.zero_grad()
             loss.backward()
             grad = img.grad.data
@@ -872,14 +889,14 @@ class PGDGeneratorInfty():
         adv = torch.min(torch.max(adv, ori - epsilon), ori + epsilon)
         adv = torch.clamp(adv, 0.0, 1.0)
         if return_numpy:
-            return adv.detach().numpy()
+            return adv.detach().cpu().numpy()
         else:
             return adv
 
 
 class PGDGenerator2():
     def __init__(self, max_batch_size):
-        self.device = torch.device('cpu')
+        self.device = torch.device('cuda:0')
         self.criterion = torch.nn.CrossEntropyLoss()
         self.max_batch_size = max_batch_size
 
@@ -955,17 +972,6 @@ def p_selection(p_init, it, num_iter):
     elif 8000 < it <= 10000:  return p_init / 512
     else:                     return p_init
 
-def get_surrogate_loss(srgt, x_adv, y_ori, batch_size): # for transferability evaluation in QueryNet's 2nd forward operation
-    if x_adv.shape[0] <= batch_size:  return get_margin_loss(y_ori, srgt(torch.Tensor(x_adv)).cpu().detach().numpy())
-    batch_num = int(x_adv.shape[0]/batch_size)
-    if batch_size * batch_num != int(x_adv.shape[0]): batch_num += 1
-    loss_value = get_margin_loss(y_ori[:batch_size], srgt(torch.Tensor(x_adv[:batch_size])).cpu().detach().numpy())
-    for i in range(batch_num-1):
-        new_loss_value = get_margin_loss(y_ori[batch_size*(i+1):batch_size*(i+2)], srgt(torch.Tensor(x_adv[batch_size*(i+1):batch_size*(i+2)])).cpu().detach().numpy())
-        loss_value = np.concatenate((loss_value, new_loss_value), axis=0)
-        del new_loss_value
-    return loss_value
-
 
 
 class QueryAttack(Attack):
@@ -987,11 +993,11 @@ class QueryAttack(Attack):
         >>> adv_images = attack(model, x, y, logits_clean)     # images---x, labels---y
     """
 
-    def __init__ (self, model, eps=8/255, iter=10000, num_x=10000):
+    def __init__ (self, model, eps=8/255, num_iter=10000, num_x=10000):
         super().__init__("QueryAttack", model)
         # some parameters
         self.eps = eps
-        self.iter = iter
+        self.num_iter = num_iter
         self.gpu = '1'
         self.num_srg = 3 # number of surrogates
         self.dataset = 'image_net'
@@ -1002,22 +1008,7 @@ class QueryAttack(Attack):
         self.seed = 1 # for random number
         self.num_x = num_x # default: 10000, number of samples for evaluation
 
-    def calculate_queryattack_rate(self, model, testloader, attack):  # test
-        model.eval()
-        correct = 0
-        total = 0
-        for images, labels in testloader:
-            images, labels = images.to(device), labels.to(device)
-            # 对图片进行攻击
-            images = attack(model, images, labels)
-            outputs = model(images)
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-        accuracy = 100 * correct / total
-        return accuracy
-
-
+    
     def get_xylogits(self, model_names):
         # model_names: default: 'resnext101_32x8d', '[inception_v3, mnasnet1_0, resnext101_32x8d] for ImageNet'
         np.random.seed(self.seed)
@@ -1032,7 +1023,7 @@ class QueryAttack(Attack):
 
         # imagenet 我们先假设model_name只有一个，即只选一个网络 #################################
         assert (not self.use_nas), 'NAS is not supported for ImageNet for resource concerns'
-        if not (self.eps == 12.75):  # ((args.l2_attack and args.eps == 5) or (not args.l2_attack and eps == 12.75)
+        if not (self.eps == 12.75):  # (args.l2_attack and args.eps == 5) or (not args.l2_attack and eps == 12.75)
             print('Warning: not using default eps in the paper, which is linfty=12.75 for ImageNet.')
         model = VictimImagenet(model_name, batch_size=self.batch_size)
         x_test, y_test = load_imagenet(self.num_x, model)
@@ -1042,40 +1033,28 @@ class QueryAttack(Attack):
         print('Clean accuracy: {:.2%}'.format(np.mean(corr_classified)) + ' ' * 40)
         y_test = dense_to_onehot(y_test.argmax(1), n_cls=1000)
 
-        return x_test[corr_classified], y_test[corr_classified], logits_clean[corr_classified]
+        return x_test[corr_classified], y_test[corr_classified], logits_clean[corr_classified], model
+        # x_test = torch.tensor(x_test[corr_classified], dtype=torch.float32)
+        # y_test = torch.tensor(y_test[corr_classified], dtype=torch.float32)
+        # logits_clean = torch.tensor(logits_clean[corr_classified], dtype=torch.float32)
 
+        # return x_test, y_test, logits_clean
+
+    
 
     def forward(self, model, x, y, logits_clean):
         os.environ["CUDA_VISIBLE_DEVICES"] = self.gpu
-        # x = x.cpu().numpy()
         np.random.seed(self.seed)
         min_val, max_val = 0, 1
         c, h, w = x.shape[1:]
-        n_features = c * h * w
+        # n_features = c * h * w
 
-        '''
-        now we don't consider l2
-        if l2_attack: # the initial stripes in square attack
-            delta_init = np.zeros(x.shape)
-            s = h // 5
-            sp_init = (h - s * 5) // 2
-            center_h = sp_init + 0
-            for counter in range(h // s):
-                center_w = sp_init + 0
-                for counter2 in range(w // s):
-                    delta_init[:, :, center_h:center_h + s, center_w:center_w + s] += QueryNet.meta_pseudo_gaussian_pert(None, s).reshape(
-                        [1, 1, s, s]) * np.random.choice([-1, 1], size=[x.shape[0], c, 1, 1])
-                    center_w += s
-                center_h += s
-            x_best = np.clip(x + delta_init / np.sqrt(np.sum(delta_init ** 2, axis=(1, 2, 3), keepdims=True)) * eps, 0, 1)
-        else:
-            x_best = np.clip(x + np.random.choice([-eps, eps], size=[x.shape[0], c, 1, w]), min_val, max_val)
-        '''
         x_best = np.clip(x + np.random.choice([-self.eps, self.eps], size=[x.shape[0], c, 1, w]), min_val, max_val)
+        x_best_init = x_best.copy()
+        y_test = torch.from_numpy(y)
 
-        # 显存够的话，直接下面这两行就可以了
-        # x_best = torch.from_numpy(x_best).float().to('cuda')
-        # logits = model(x_best)
+        # logits = model(torch.tensor(x_best).float())
+
         # 显存不够的话，分批计算logits
         num_batches = (len(x_best) + self.batch_size - 1) // self.batch_size  # 计算总批次数，确保最后的不足一个批次的数据也会被处理
         logits_list = []
@@ -1085,7 +1064,7 @@ class QueryAttack(Attack):
             x_batch = x_best[start_idx:end_idx]
             if x_batch.shape[0] == 0:
                 continue
-            x_batch = torch.from_numpy(x_batch).float().to('cuda')
+            x_batch = torch.from_numpy(x_batch).float().to('cuda:0')
             with torch.no_grad():
                 logits_batch = model(x_batch)
             logits_list.append(logits_batch)
@@ -1094,53 +1073,58 @@ class QueryAttack(Attack):
             torch.cuda.empty_cache()
         logits = torch.cat(logits_list, dim=0)
 
-
-        loss_min = get_margin_loss(torch.from_numpy(y).to('cuda'), logits)
+        loss_min = get_margin_loss(torch.from_numpy(y).to('cuda:0'), logits)
         n_queries = np.ones(x.shape[0]) * 2  # have queried with original samples and stripe samples
 
-        surrogate_names = ['DenseNet121', 'ResNet50', 'DenseNet169', 'ResNet101', 'DenseNet201', 'VGG19'][
-                          :self.num_srg]  # surrogates if not using nas
-
+        surrogate_names = ['DenseNet121', 'ResNet50', 'DenseNet169', 'ResNet101', 'DenseNet201', 'VGG19'][:self.num_srg] # surrogates if not using nas
         result_path = get_time() + f'_{self.dataset}_ResNet101' + \
-                      ('_linfty') + \
-                      f'_eps{round(self.eps * 255, 2)}' + \
-                      ('_Eval' if self.num_srg != 0 else '') + \
-                      ('_Sqr+' if self.use_square_plus else '') + \
-                      (f'_NAS{self.num_srg}' if self.use_nas else (
-                          '_' + '-'.join(surrogate_names) if len(surrogate_names) != 0 else ''))
+            ('_linfty') + \
+            f'_eps{round(self.eps*255, 2)}' + \
+            ('_Eval' if self.num_srg != 0 else '') + \
+            ('_Sqr+' if self.use_square_plus else '') + \
+            (f'_NAS{self.num_srg}' if self.use_nas else ('_'+'-'.join(surrogate_names) if len(surrogate_names) != 0 else ''))
         print(result_path)
+
         log = Logger('')
         logger = LoggerUs(result_path)
         os.makedirs(result_path + '/log', exist_ok=True)
         log.reset_path(result_path + '/log/main.log')
         metrics_path = logger.result_paths['base'] + '/log/metrics'
-        # log.print(str(args))
 
-        # print(x.device(), logits_clean.device(), result_path.device(), y.device())
         sampler = DataManager(x, logits_clean, self.eps, result_dir=result_path, loss_init=get_margin_loss(y, logits_clean))
+        # x_best_cpu = x_best.cpu().numpy()  # 转换为 NumPy 数组 .detach
+        # logits_cpu = logits.cpu().numpy()
         sampler.update_buffer(x_best, logits.cpu().numpy(), loss_min, logger, targeted=False, data_indexes=None, margin_min=loss_min)
         sampler.update_lipschitz()
-        print(surrogate_names, self.use_square_plus)
-        querynet = QueryNet(sampler, 'ResNet101', surrogate_names, self.use_square_plus, True, self.use_nas, self.eps,
-                            self.batch_size)  # only consider linf
+        querynet = QueryNet(sampler, 'ResNet101', surrogate_names, self.use_square_plus, True, self.use_nas, self.eps, self.batch_size)
+
+        def get_surrogate_loss(srgt, x_adv, y_ori): # for transferability evaluation in QueryNet's 2nd forward operation
+            if x_adv.shape[0] <= self.batch_size:  return get_margin_loss(y_ori, srgt(torch.Tensor(x_adv)).cpu().detach().numpy())
+            batch_num = int(x_adv.shape[0]/self.batch_size)
+            if self.batch_size * batch_num != int(x_adv.shape[0]): batch_num += 1
+            loss_value = get_margin_loss(y_ori[:self.batch_size], srgt(torch.Tensor(x_adv[:self.batch_size])).cpu().detach().numpy())
+            for i in range(batch_num-1):
+                new_loss_value = get_margin_loss(y_ori[self.batch_size*(i+1):self.batch_size*(i+2)], srgt(torch.Tensor(x_adv[self.batch_size*(i+1):self.batch_size*(i+2)])).cpu().detach().numpy())
+                loss_value = np.concatenate((loss_value, new_loss_value), axis=0)
+                # loss_value = torch.cat((loss_value, new_loss_value), dim=0)
+                del new_loss_value
+            return loss_value
 
         time_start = time.time()
-        metrics = np.zeros([self.iter, 7])
-
-        # 对传入参数x图像集进行self.iter次的query，直到图像集的预测正确率为0（或到达self.iter次）
-        for i_iter in range(self.iter):
+        metrics = np.zeros([self.num_iter, 7])
+        for i_iter in range(self.num_iter):
             # focus on unsuccessful AEs
             idx_to_fool = loss_min > 0
-            x_curr, x_best_curr, y_curr, loss_min_curr = x[idx_to_fool], x_best[idx_to_fool], y[idx_to_fool], loss_min[
-                idx_to_fool]
+            # x_curr, x_best_curr, y_curr, loss_min_curr = x[idx_to_fool], x_best[idx_to_fool], y[idx_to_fool], loss_min[idx_to_fool]
+            x_curr = torch.from_numpy(x[idx_to_fool]).to(device)
+            x_best_curr = torch.from_numpy(x_best[idx_to_fool]).to(device)
+            y_curr = torch.from_numpy(y[idx_to_fool]).to(device)
+            loss_min_curr = loss_min[idx_to_fool]
 
             # QueryNet's forward propagation
-            x_q, a = querynet.forward(x_curr, x_best_curr, y_curr, get_surrogate_loss, self.batch_size, min_val=min_val,
-                                      max_val=max_val, p=p_selection(self.p_init, i_iter, self.iter), targeted=False)
+            x_q, a = querynet.forward(x_curr.float(), x_best_curr.float(), y_curr.float(), get_surrogate_loss, min_val=min_val, max_val=max_val, p=p_selection(self.p_init, i_iter, self.num_iter), targeted=False)
 
             # query
-            # 显存够的话，直接下面这行就可以了
-            # x_q = torch.from_numpy(x_q).float().to('cuda')
             # logits = model(x_q)
             # 显存不够的话，分批计算logits
             num_batches = (len(x_q) + self.batch_size - 1) // self.batch_size  # 计算总批次数，确保最后的不足一个批次的数据也会被处理
@@ -1151,7 +1135,7 @@ class QueryAttack(Attack):
                 x_batch = x_q[start_idx:end_idx]
                 if x_batch.shape[0] == 0:
                     continue
-                x_batch = torch.from_numpy(x_batch).float().to('cuda')
+                x_batch = torch.from_numpy(x_batch).float().to('cuda:0')
                 with torch.no_grad():
                     logits_batch = model(x_batch)
                 logits_list.append(logits_batch)
@@ -1164,76 +1148,104 @@ class QueryAttack(Attack):
             idx_improved = loss < loss_min_curr
             loss_min[idx_to_fool] = idx_improved * loss + ~idx_improved * loss_min_curr
             idx_improved = np.reshape(idx_improved, [-1, *[1] * len(x.shape[:-1])])
-            x_best[idx_to_fool] = idx_improved * x_q + ~idx_improved * x_best_curr
+            x_best[idx_to_fool] = idx_improved * x_q+ ~idx_improved * x_best_curr.cpu().numpy()
             n_queries[idx_to_fool] += 1
+            # if i_iter == self.num_iter-1:
+            ppath = "/iter_{}".format(i_iter+1)
+            os.makedirs(logger.result_paths['adv'] + ppath, exist_ok=True)
+            save_imgs(x_best, indexes=np.arange(1000), result_path_adv=logger.result_paths['adv'] + ppath)
 
             # QueryNet's backward propagation
-            message = querynet.backward(idx_improved, a, data_indexes=np.where(idx_to_fool)[0],
-                                        margin_min=loss_min, img_adv=x_q, lbl_adv=logits, loss=loss, logger=logger,
-                                        targeted=False)
             if a is not None:
-                print(' ' * 80, end='\r')
+                a = a.astype(np.int32)
+            message = querynet.backward(idx_improved, a, data_indexes=np.where(idx_to_fool)[0], margin_min=loss_min, img_adv=x_q.astype(np.float32), lbl_adv=logits.cpu().numpy(), loss=loss, logger=logger, targeted=False)
+            if a is not None:
+                print(' '*80, end='\r')
                 log.print(message)
                 querynet.sampler.save(i_iter)
+            
 
-            # 到这里为止，x_best就是经过query后的图片集
-
-        return x_best
-
-    '''
             # logging
             acc_corr = (loss_min > 0.0).mean()
             mean_nq_all, mean_nq = np.mean(n_queries), np.mean(n_queries[loss_min <= 0])
-            median_nq_all, median_nq = np.median(n_queries) - 1, np.median(n_queries[loss_min <= 0]) - 1
+            median_nq_all, median_nq = np.median(n_queries)-1, np.median(n_queries[loss_min <= 0])-1
             avg_loss = np.mean(loss_min)
             elapse = time.time() - time_start
-            msg = '{}: Acc={:.2%}, AQ_suc={:.2f}, MQ_suc={:.1f}, AQ_all={:.2f}, MQ_all={:.1f}, ALoss_all={:.2f}, |D|={:d}, Time={:.1f}s'. \
-                format(i_iter + 1, acc_corr, mean_nq, median_nq, mean_nq_all, median_nq_all, avg_loss,
-                       querynet.sampler.clean_sample_indexes[-1], elapse)
-            log.print(msg if 'easydl' not in model.arch else msg + ', query=%d' % model.query)
+            msg = '{}: Acc={:.2%}, AQ_suc={:.2f}, MQ_suc={:.1f}, AQ_all={:.2f}, MQ_all={:.1f}, ALoss_all={:.2f}, |D|={:d}, Time={:.1f}s'.\
+                format(i_iter + 1, acc_corr, mean_nq, median_nq, mean_nq_all, median_nq_all, avg_loss, querynet.sampler.clean_sample_indexes[-1], elapse)
+            log.print(msg) # if 'easydl' not in model.arch else msg + ', query=%d' % model.query)
             metrics[i_iter] = [acc_corr, mean_nq, median_nq, mean_nq_all, median_nq_all, avg_loss, elapse]
             np.save(metrics_path, metrics)
             if acc_corr == 0: break
+
+            # 测试每一轮的x_best的准确率
+            batch_size = 16
+            model.eval()
+            correct = 0
+            num_batches = (len(x_best) + batch_size - 1) // batch_size  # 计算总批次数
+            output_list = []
+            for i in range(num_batches):
+                start_idx = i * batch_size
+                end_idx = min(start_idx + batch_size, len(x_best))
+                x_ = x_best[start_idx:end_idx]
+                if x_.shape[0] == 0:
+                    continue
+                x_ = torch.from_numpy(x_).float().to('cuda')
+                with torch.no_grad():
+                    output_batch = model(x_)
+                output_list.append(output_batch)
+                del x_
+                del output_batch
+                torch.cuda.empty_cache()
+            outputs = torch.cat(output_list, dim=0)
+
+            _, predicted = torch.max(outputs.data, 1)
+            predicted = predicted.cpu()
+            total = y_test.size(0)
+            correct += (predicted == y_test).sum().item()
+            # 打印维度
+            print("Predicted shape:", predicted.shape)
+            print("y_test shape:", y_test.shape)
+
+            # 判断维度是否相同
+            if predicted.shape == y_test.shape:
+                print("The shapes are the same.")
+            else:
+                print("The shapes are different.")
+            # equal_pairs = predicted == y_test 
+            # correct = torch.sum(equal_pairs).item()  # 使用 .item() 来获取数值
+            accuracy = 100 * correct / total
+            msg_xbest = '{}: Accuracy of x_best in each iteration: {:.2f}%, correct = {}, total = {}'.\
+                format(i_iter + 1, accuracy, correct, total)
+            log.print(msg_xbest)
+
+            pixel_diff = x_best - x_best_init
+            # 计算差值的平均值
+            mean_diff = np.mean(np.abs(pixel_diff))
+            print("每个像素差值的平均值:", mean_diff.item())
+            
         torch.cuda.empty_cache()
-            
-            
-        images = x.clone().detach().to(self.device)
-        labels = y.clone().detach().to(self.device)
-        if self.targeted:
-            target_labels = self.get_target_label(images, labels)
-        loss = nn.CrossEntropyLoss()
-        images.requires_grad = True
-        outputs = self.get_logits(images)
+        # os.makedirs(logger.result_paths['adv']+"/x_q", exist_ok=True)
+        # save_imgs(x_q, indexes=np.arange(1000), result_path_adv=logger.result_paths['adv']+"./x_q")
 
-        # Calculate loss
-        if self.targeted:
-            cost = -loss(outputs, target_labels)
-        else:
-            cost = loss(outputs, labels)
+        return x_best_init, x_best
 
-        # Update adversarial images
-        grad = torch.autograd.grad(
-            cost, images, retain_graph=False, create_graph=False
-        )[0]
-        adv_images = images.data + self.eps * grad.data.sign()
-        adv_images = torch.clamp(adv_images, min=0, max=1).detach()
-        return adv_images
-    
-    
+
+'''
     def QueryAttack(args):
         query_net, eps, seed, l2_attack, num_iter, p_init, num_srg, use_square_plus, use_nas = \
             (args.eps / 255 if not args.l2_attack else args.eps), (args.seed if args.seed != -1 else args.run_time), \
             args.query_net, args.l2_attack, args.num_iter, args.p_init, args.num_srg, args.use_square_plus, args.use_nas
         np.random.seed(args.seed)
-    
+
         if args.use_nas: assert args.num_srg > 0
         os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
         log = Logger('')
-    
+
         for model_name in args.query_net.split(','):
             if model_name in ['inception_v3', 'mnasnet1_0', 'resnext101_32x8d']:         dataset = 'imagenet'
             else: raise ValueError('Invalid Victim Name!')
-    
+
             # imagenet
             assert (not args.use_nas), 'NAS is not supported for ImageNet for resource concerns'
             if not ((args.l2_attack and args.eps == 5) or (not args.l2_attack and args.eps == 12.75)):
@@ -1241,12 +1253,12 @@ class QueryAttack(Attack):
             batch_size = 100 if model_name != 'resnext101_32x8d' else 32
             model = VictimImagenet(model_name, batch_size=batch_size)
             x_test, y_test = load_imagenet(args.num_x, model)
-    
+
             logits_clean = model(x_test)
             corr_classified = logits_clean.argmax(1) == y_test.argmax(1)
             print('Clean accuracy: {:.2%}'.format(np.mean(corr_classified)) + ' ' * 40)
             y_test = dense_to_onehot(y_test.argmax(1), n_cls=10 if dataset != 'imagenet' else 1000)
             for run_time in range(args.run_times):
                 attack(model, x_test[corr_classified], y_test[corr_classified], logits_clean[corr_classified], dataset, batch_size, run_time, args, log)
-    '''
+'''
 

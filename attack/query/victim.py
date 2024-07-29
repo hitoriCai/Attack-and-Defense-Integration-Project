@@ -10,33 +10,15 @@ ssl._create_default_https_context = ssl._create_unverified_context
 import sys
 sys.path.append("..")
 from models import make_model
-device = torch.device('cuda')
+device = torch.device('cuda:0')
 
 
-'''
-原代码
 def get_margin_loss(y, logits, targeted=False, loss_type='margin_loss'):
     """ Implements the margin loss (difference between the correct and 2nd best class). """
-    if loss_type == 'margin_loss':
-        preds_correct_class = (logits * y).sum(1, keepdims=True)
-        diff = preds_correct_class - logits  # difference between the correct class and all other classes
-        diff[y] = np.inf  # to exclude zeros coming from f_correct - f_correct
-        margin = diff.min(1, keepdims=True)
-        loss = margin * -1 if targeted else margin
-    elif loss_type == 'cross_entropy':
-        probs = softmax(logits)
-        loss = -np.log(probs[y])
-        loss = loss * -1 if not targeted else loss
-    else:
-        raise ValueError('Wrong loss.')
-    return loss.flatten()
-'''
-
-# 改成下面这个代码
-def get_margin_loss(y, logits, targeted=False, loss_type='margin_loss'):
-    """ Implements the margin loss (difference between the correct and 2nd best class). """
-    logits = torch.tensor(logits, dtype=torch.float32)
-    y = torch.tensor(y, dtype=torch.float32)
+    logits = torch.tensor(logits, dtype=torch.float32).clone()
+    y = torch.tensor(y, dtype=torch.float32).clone()
+    # logits = logits.clone().detach().float()
+    # y = y.clone().detach().float()
     if loss_type == 'margin_loss':
         preds_correct_class = (logits * y).sum(dim=1, keepdim=True)
         diff = preds_correct_class - logits
@@ -126,7 +108,7 @@ class VictimMnist(nn.Module):
 
 
 class VictimImagenet(nn.Module):
-    def __init__(self, arch, device=device, batch_size=100, **kwargs):  # batch_size = 100
+    def __init__(self, arch, device=device, batch_size=100, **kwargs):
         super(VictimImagenet, self).__init__()
         self.arch = arch
         self.cnn = getattr(torchvision.models, arch)(pretrained=True).to(device).eval()
@@ -147,4 +129,5 @@ class VictimImagenet(nn.Module):
             new_logits = self.cnn(torch.Tensor(x[self.batch_size*(i+1):self.batch_size*(i+2)]).to(self.device)).detach().cpu().numpy()
             logits = np.concatenate((logits, new_logits), axis=0)
             del new_logits
+        # return torch.from_numpy(logits).to("cuda:0")
         return logits
