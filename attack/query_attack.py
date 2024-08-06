@@ -974,7 +974,7 @@ def p_selection(p_init, it, num_iter):
 
 
 
-class QueryAttack(Attack):
+class QueryAttack():
     r"""
     Arguments:
         model_names: default='resnext101_32x8d', type=str, [inception_v3, mnasnet1_0, resnext101_32x8d] for ImageNet.
@@ -994,7 +994,7 @@ class QueryAttack(Attack):
     """
 
     def __init__ (self, model, eps=8/255, num_iter=10000, num_x=10000):
-        super().__init__("QueryAttack", model)
+        # super().__init__("QueryAttack", model)
         # some parameters
         self.eps = eps
         self.num_iter = num_iter
@@ -1042,7 +1042,7 @@ class QueryAttack(Attack):
 
     
 
-    def forward(self, model, x, y, logits_clean):
+    def __call__(self, model, x, y, logits_clean):
         os.environ["CUDA_VISIBLE_DEVICES"] = self.gpu
         np.random.seed(self.seed)
         min_val, max_val = 0, 1
@@ -1051,7 +1051,6 @@ class QueryAttack(Attack):
 
         x_best = np.clip(x + np.random.choice([-self.eps, self.eps], size=[x.shape[0], c, 1, w]), min_val, max_val)
         x_best_init = x_best.copy()
-        y_test = torch.from_numpy(y)
 
         # logits = model(torch.tensor(x_best).float())
 
@@ -1064,16 +1063,17 @@ class QueryAttack(Attack):
             x_batch = x_best[start_idx:end_idx]
             if x_batch.shape[0] == 0:
                 continue
-            x_batch = torch.from_numpy(x_batch).float().to('cuda:0')
+            # x_batch = torch.from_numpy(x_batch).float().to('cuda:0')
             with torch.no_grad():
                 logits_batch = model(x_batch)
             logits_list.append(logits_batch)
             del x_batch
             del logits_batch
             torch.cuda.empty_cache()
-        logits = torch.cat(logits_list, dim=0)
+        # logits = torch.cat(logits_list, dim=0)
+        logits = np.concatenate(logits_list, axis=0)
 
-        loss_min = get_margin_loss(torch.from_numpy(y).to('cuda:0'), logits)
+        loss_min = get_margin_loss(torch.from_numpy(y).to('cuda:0'), torch.from_numpy(logits).to('cuda:0'))# logits)
         n_queries = np.ones(x.shape[0]) * 2  # have queried with original samples and stripe samples
 
         surrogate_names = ['DenseNet121', 'ResNet50', 'DenseNet169', 'ResNet101', 'DenseNet201', 'VGG19'][:self.num_srg] # surrogates if not using nas
@@ -1094,7 +1094,7 @@ class QueryAttack(Attack):
         sampler = DataManager(x, logits_clean, self.eps, result_dir=result_path, loss_init=get_margin_loss(y, logits_clean))
         # x_best_cpu = x_best.cpu().numpy()  # 转换为 NumPy 数组 .detach
         # logits_cpu = logits.cpu().numpy()
-        sampler.update_buffer(x_best, logits.cpu().numpy(), loss_min, logger, targeted=False, data_indexes=None, margin_min=loss_min)
+        sampler.update_buffer(x_best, logits, loss_min, logger, targeted=False, data_indexes=None, margin_min=loss_min)
         sampler.update_lipschitz()
         querynet = QueryNet(sampler, 'ResNet101', surrogate_names, self.use_square_plus, True, self.use_nas, self.eps, self.batch_size)
 
@@ -1135,16 +1135,17 @@ class QueryAttack(Attack):
                 x_batch = x_q[start_idx:end_idx]
                 if x_batch.shape[0] == 0:
                     continue
-                x_batch = torch.from_numpy(x_batch).float().to('cuda:0')
+                # x_batch = torch.from_numpy(x_batch).float().to('cuda:0')
                 with torch.no_grad():
                     logits_batch = model(x_batch)
                 logits_list.append(logits_batch)
                 del x_batch
                 del logits_batch
                 torch.cuda.empty_cache()
-            logits = torch.cat(logits_list, dim=0)
+            # logits = torch.cat(logits_list, dim=0)
+            logits = np.concatenate(logits_list, axis=0)
 
-            loss = get_margin_loss(y_curr, logits)
+            loss = get_margin_loss(y_curr,  torch.from_numpy(logits).to('cuda:0'))# logits)
             idx_improved = loss < loss_min_curr
             loss_min[idx_to_fool] = idx_improved * loss + ~idx_improved * loss_min_curr
             idx_improved = np.reshape(idx_improved, [-1, *[1] * len(x.shape[:-1])])
@@ -1158,7 +1159,9 @@ class QueryAttack(Attack):
             # QueryNet's backward propagation
             if a is not None:
                 a = a.astype(np.int32)
-            message = querynet.backward(idx_improved, a, data_indexes=np.where(idx_to_fool)[0], margin_min=loss_min, img_adv=x_q.astype(np.float32), lbl_adv=logits.cpu().numpy(), loss=loss, logger=logger, targeted=False)
+            # message = querynet.backward(idx_improved, a, data_indexes=np.where(idx_to_fool)[0], margin_min=loss_min, img_adv=x_q.astype(np.float32), lbl_adv=logits_clean, loss=loss, logger=logger, targeted=False)
+            message = querynet.backward(idx_improved, a, data_indexes=np.where(idx_to_fool)[0], 
+            margin_min=loss_min, img_adv=x_q, lbl_adv=logits, loss=loss, logger=logger, targeted=False)
             if a is not None:
                 print(' '*80, end='\r')
                 log.print(message)
@@ -1190,28 +1193,25 @@ class QueryAttack(Attack):
                 x_ = x_best[start_idx:end_idx]
                 if x_.shape[0] == 0:
                     continue
-                x_ = torch.from_numpy(x_).float().to('cuda')
+                # x_ = torch.from_numpy(x_).float().to('cuda')
                 with torch.no_grad():
                     output_batch = model(x_)
                 output_list.append(output_batch)
                 del x_
                 del output_batch
                 torch.cuda.empty_cache()
-            outputs = torch.cat(output_list, dim=0)
+            # outputs = torch.cat(output_list, dim=0)
+            outputs = np.concatenate(output_list, axis=0)
 
-            _, predicted = torch.max(outputs.data, 1)
+            _, predicted = torch.max(torch.tensor(outputs), 1)
             predicted = predicted.cpu()
+            y_test = torch.argmax(torch.tensor(y).to(torch.int32), dim=1)
             total = y_test.size(0)
             correct += (predicted == y_test).sum().item()
             # 打印维度
             print("Predicted shape:", predicted.shape)
             print("y_test shape:", y_test.shape)
 
-            # 判断维度是否相同
-            if predicted.shape == y_test.shape:
-                print("The shapes are the same.")
-            else:
-                print("The shapes are different.")
             # equal_pairs = predicted == y_test 
             # correct = torch.sum(equal_pairs).item()  # 使用 .item() 来获取数值
             accuracy = 100 * correct / total

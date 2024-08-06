@@ -193,8 +193,8 @@ if __name__ == '__main__':
     # only for QueryAttack:
     # test_query(net, x_test, y_test, logits_clean, attack=attack)
     # attack(net, x_test, y_test, logits_clean)
-    # querynet_model = querynet_model.to(device)
-    attack_accuracy = test_query(net, x_test, y_test, logits_clean, attack=attack)
+    querynet_model = querynet_model.to(device)
+    attack_accuracy = test_query(querynet_model, x_test, y_test, logits_clean, attack=attack)
     print(f'After 5000 iters, accuracy on attacked test images: {attack_accuracy:.2f}%')
 
 
