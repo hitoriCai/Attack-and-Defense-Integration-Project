@@ -135,6 +135,8 @@ attack = attack.Square(net, norm='Linf', eps= 8/225, n_queries=100, n_restarts=1
 
 ## 5. Query
 
+### 5.1 最初版本的queryattack
+
 用 `querynet.py` 跑, 单独的, 用的默认参数见下
 
 ![image-20240716164803875](D:\SJTU_research\Attack-and-Defense-Integration-Project\attack\assets\image-20240716164803875.png)
@@ -162,6 +164,76 @@ for run_time in range(args.run_times):
 7234: Acc=0.10%, AQ_suc=45.95, MQ_suc=7.0, AQ_all=53.14, MQ_all=7.0, ALoss_all=-1.82, |D|=2000, Time=459.5s
 7235: Acc=0.00%, AQ_suc=53.14, MQ_suc=7.0, AQ_all=53.14, MQ_all=7.0, ALoss_all=-1.82, |D|=2000, Time=459.6s
 ```
+
+
+
+### 5.2 形成接口的queryattack
+
+在 `test_imagenet.py` 里运行，参数及接口调用方式见下：
+
+```python
+# 用QueryAttack攻击：(不需要上面定义的net=resnet50了，这里用的是querynet_model)
+attack = attack.QueryAttack(net, eps=8/255, num_iter=5000)
+x_test, y_test, logits_clean, querynet_model = attack.get_xylogits(model_names='resnext101_32x8d')
+querynet_model = querynet_model.to(device)
+x_best = attack(querynet_model, x_test, y_test, logits_clean) # adv_images after 'iter' queries
+
+attack_accuracy = test_query(querynet_model, x_best, y_test)  # for QueryAttack
+print(f'Accuracy on attacked test images: {attack_accuracy:.2f}%')
+```
+
+主要输出结果:	在 **5000** 次 query 之后, 图片的分类正确率为 **0.60%**
+```shell
++--------+-------------+-------------+-------------+-------------+-------------+
+| ATTACK | DenseNet121 |   ResNet50  | DenseNet169 |   Square+   |    Square   |
++--------+-------------+-------------+-------------+-------------+-------------+
+| WEIGHT |    0.873    |    0.840    |    0.872    |    0.000    |    0.000    |
+| CHOSEN |    0.336    |    0.281    |    0.380    |    0.002    |    0.000    |
++--------+-------------+-------------+-------------+-------------+-------------+
++--------+-------------+-------------+-------------+-------------+-------------+
+| ATTACK | DenseNet121 |   ResNet50  | DenseNet169 |   Square+   |    Square   |
++--------+-------------+-------------+-------------+-------------+-------------+
+| WEIGHT |    0.273    |    0.238    |    0.400    |    0.262    |    0.000    |
+| CHOSEN |    0.338    |    0.187    |    0.397    |    0.078    |    0.000    |
++--------+-------------+-------------+-------------+-------------+-------------+
++--------+-------------+-------------+-------------+-------------+-------------+
+| ATTACK | DenseNet121 |   ResNet50  | DenseNet169 |   Square+   |    Square   |
++--------+-------------+-------------+-------------+-------------+-------------+
+| WEIGHT |    0.119    |    0.075    |    0.243    |    0.265    |    0.000    |
+| CHOSEN |    0.214    |    0.079    |    0.574    |    0.134    |    0.000    |
++--------+-------------+-------------+-------------+-------------+-------------+
++--------+-------------+-------------+-------------+-------------+-------------+
+| ATTACK | DenseNet121 |   ResNet50  | DenseNet169 |   Square+   |    Square   |
++--------+-------------+-------------+-------------+-------------+-------------+
+| WEIGHT |    0.119    |    0.075    |    0.243    |    0.364    |    0.364    |
+| CHOSEN |    0.000    |    0.000    |    0.000    |    0.534    |    0.466    |
++--------+-------------+-------------+-------------+-------------+-------------+
+Accuracy on attacked test images: 0.60%
+```
+
+需要注意:
+
+1. queryattack 需要用到另外写的 `test_query` 函数
+2. model 用的是 `VictimImagenet` (resnext101), 不是以前的 net
+3. 运行 `test_imagenet.py` 后得到一个文件夹, 里面有 `adv` 和 `final_adv_images` 两个图片目录, 后者是 5000 次攻击之后得到的图片(但看起来两个目录里的图片是一样的)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
