@@ -9,10 +9,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from base_attacker import Attack
+from attack.base_attacker import Attack
 
-from query.surrogate import *
-from query.victim import *
+from attack.query.surrogate import *
+from attack.query.victim import *
 import prettytable as pt
 
 
@@ -524,9 +524,9 @@ class QueryNet():
                                  n_channels=self.sampler.data.shape[1], softmax='easydl' in victim_name,
                                  gpu_id=0 if gpus == 1 else i % (gpus - 1) + 1))
 
-            save_info = 'query/pretrained/netSTrained_{}_{}_{}.pth'.format(surrogate_name, victim_name,
+            save_info = 'attack/query/pretrained/netSTrained_{}_{}_{}.pth'.format(surrogate_name, victim_name,
                                                                      0) if not self.use_nas else \
-                'query/pretrained/netSTrained_NAS{}_{}_latest.pth'.format(self.use_nas_layers[i], self.victim_name)
+                'attack/query/pretrained/netSTrained_NAS{}_{}_latest.pth'.format(self.use_nas_layers[i], self.victim_name)
 
             self.surrogate_save_paths.append(save_info)
             if os.path.exists(save_info):

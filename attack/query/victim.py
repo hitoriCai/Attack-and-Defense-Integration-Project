@@ -129,5 +129,4 @@ class VictimImagenet(nn.Module):
             new_logits = self.cnn(torch.Tensor(x[self.batch_size*(i+1):self.batch_size*(i+2)]).to(self.device)).detach().cpu().numpy()
             logits = np.concatenate((logits, new_logits), axis=0)
             del new_logits
-        # return torch.from_numpy(logits).to("cuda:0")
         return logits
