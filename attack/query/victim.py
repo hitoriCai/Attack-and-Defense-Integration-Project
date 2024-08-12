@@ -108,19 +108,18 @@ class VictimMnist(nn.Module):
 
 
 class VictimImagenet(nn.Module):
-    def __init__(self, arch, device=device, batch_size=100, **kwargs):
+    def __init__(self, model, device=device, batch_size=100, **kwargs):
         super(VictimImagenet, self).__init__()
-        self.arch = arch
-        self.cnn = getattr(torchvision.models, arch)(pretrained=True).to(device).eval()
+        self.cnn = model.eval()
         self.cnn.to(device)
         self.batch_size = batch_size
         self.device = device
 
-    def __call__(self, _x):
-        mean = [0.485, 0.456, 0.406]
-        std = [0.229, 0.224, 0.225]
-        x = np.floor(_x * 255.0) / 255.0
-        for i in range(3): x[:, i, :, :] = (x[:, i, :, :]-mean[i])/std[i]
+    def __call__(self, x):
+        # mean = [0.485, 0.456, 0.406]
+        # std = [0.229, 0.224, 0.225]
+        # x = np.floor(_x * 255.0) / 255.0
+        # for i in range(3): x[:, i, :, :] = (x[:, i, :, :]-mean[i])/std[i]
         if x.shape[0] <= self.batch_size: return self.cnn(torch.Tensor(x).to(self.device)).detach().cpu().numpy()
         batch_num = int(x.shape[0]/self.batch_size)
         if self.batch_size * batch_num != int(x.shape[0]): batch_num += 1

@@ -1003,34 +1003,70 @@ class QueryAttack():
         self.p_init = 0.05 # hyperparameter of Square, the probability of changing a coordinate
         self.seed = 1 # for random number
         self.num_x = num_x # default: 10000, number of samples for evaluation
+        self.device = "cuda:0"
 
     
-    def get_xylogits(self, model_names):
-        # model_names: default: 'resnext101_32x8d', '[inception_v3, mnasnet1_0, resnext101_32x8d] for ImageNet'
-        np.random.seed(self.seed)
+    def get_xylogits(self, model, testloader):
         if self.use_nas: assert self.num_srg > 0
         os.environ["CUDA_VISIBLE_DEVICES"] = self.gpu
-
-        for model_name in model_names.split(','):
-            if model_name in ['inception_v3', 'mnasnet1_0', 'resnext101_32x8d']:
-                dataset = 'imagenet'
-            else:
-                raise ValueError('Invalid Victim Name!')
-
-        # imagenet 我们先假设model_name只有一个，即只选一个网络 #################################
         assert (not self.use_nas), 'NAS is not supported for ImageNet for resource concerns'
-        if not (self.eps == 12.75):  # (args.l2_attack and args.eps == 5) or (not args.l2_attack and eps == 12.75)
+        if not (self.eps == 12.75):
             print('Warning: not using default eps in the paper, which is linfty=12.75 for ImageNet.')
-        model = VictimImagenet(model_name, batch_size=self.batch_size, device='cuda:0')
-        x_test, y_test = load_imagenet(self.num_x, model)
+        model = VictimImagenet(model, batch_size=self.batch_size, device='cuda:0')
 
+        x_test, y_test = load_imagenet(model, testloader, self.num_x)
         logits_clean = model(x_test)
         corr_classified = logits_clean.argmax(1) == y_test.argmax(1)
-        print('Clean accuracy: {:.2%}'.format(np.mean(corr_classified)) + ' ' * 40)
+        # print('Clean accuracy: {:.2%}'.format(np.mean(corr_classified)) + ' ' * 40)
         y_test = dense_to_onehot(y_test.argmax(1), n_cls=1000)
 
         return x_test[corr_classified], y_test[corr_classified], logits_clean[corr_classified], model
     
+    '''
+    def load_imagenet(n_ex, model):
+        current_dir = os.path.dirname(os.path.abspath(__file__))  ## 怎么只有这样写路径才对啊。。。
+        data_dir = os.path.join(current_dir, 'data')
+        val_file_path = os.path.join(data_dir, 'val.txt')
+        with open(val_file_path, 'r') as f: txt = f.read().split('\n')
+        # with open(paths['CGTI'], 'r') as f: txt = f.read().split('\n')
+        labels = {}
+        for item in txt:
+            if ' ' not in item: continue
+            file, cls = item.split(' ')
+            labels[file] = int(cls)     # file 是图片的名字
+        
+        data = []
+        folders = os.listdir(paths['CDataI'])
+        label = np.zeros((min([1000, n_ex]), 1000), dtype=np.uint8)
+        label_done = []
+        random.seed(0)
+        
+        for i in random.sample(range(len(folders)), len(folders)):
+            folder = folders[i]
+            files = os.listdir(paths['CDataI'] + '/' + folder)
+            for j in range(len(files)):
+                file = files[j]
+                lbl = labels[file]
+                if lbl in label_done: continue
+
+                img = np.array(PIL.Image.open(
+                    paths['CDataI'] + '/' + folder + '/' + file).convert('RGB').resize((224, 224))) \
+                    .astype(np.float32).transpose((2, 0, 1)) / 255
+                prd = model(torch.tensor(img[np.newaxis, ...])).argmax(1)
+                if prd != lbl: continue
+
+                label[len(data), lbl] = 1
+                data.append(img)
+                label_done.append(lbl)
+            print('selecting samples in different classes...', len(label_done), '/',1000, end='\r')
+            if len(label_done) == min([1000, n_ex]): break
+        data = np.array(data)
+
+        x_test = np.array(data)
+        y_test = np.array(label)
+        return x_test[:n_ex], y_test[:n_ex]
+    '''
+
 
     def __call__(self, model, x, y, logits_clean):
         os.environ["CUDA_VISIBLE_DEVICES"] = self.gpu

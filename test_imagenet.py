@@ -13,22 +13,28 @@ import argparse
 import sys
 sys.path.append("..")
 import attack
+from models import *
 
 
 def test(model, testloader, attack=None):
     model.eval()
     correct = 0
-    total = 0
-    for images, labels in testloader:
-        images, labels = images.to(device), labels.to(device)
-        # 对图片进行攻击
-        if attack:
-            images = attack(images, labels)
-        outputs = model(images)
-        _, predicted = torch.max(outputs.data, 1)
-        total += labels.size(0)
-        correct += (predicted == labels).sum().item()
-    accuracy = 100 * correct / total
+    if hasattr(attack, 'get_xylogits'): # queryattack
+        x_test, y_test, logits_clean, net = attack.get_xylogits(model, testloader)
+        x_adv = attack(net, x_test, y_test, logits_clean) # adv_images after 'iter' queries
+        accuracy = test_query(net, x_adv, y_test)  # for QueryAttack
+    else: 
+        total = 0
+        for images, labels in testloader:
+            images, labels = images.to(device), labels.to(device)
+            # 对图片进行攻击
+            if attack:
+                images = attack(images, labels)
+            outputs = model(images)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+        accuracy = 100 * correct / total
     return accuracy
 
 
@@ -107,20 +113,12 @@ if __name__ == '__main__':
     data_dir = '/opt/data/common/ILSVRC2012'
     # data_dir = '/home/datasets/ILSVRC2012'
     print('==> Preparing data..')
-    '''
-    transform_train = transforms.Compose([
-        transforms.RandomResizedCrop(224),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-    ])
-    '''
 
     transform_test = transforms.Compose([
         transforms.Resize(256),
         transforms.CenterCrop(224),
         transforms.ToTensor(),
-        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        # transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
 
     testset = ImageFolder(root=os.path.join(data_dir, 'val'), transform=transform_test)
@@ -128,18 +126,13 @@ if __name__ == '__main__':
 
     # Model
     print('==> Building model..')
-    net = models.resnet50(pretrained=True)  # resnet50
-    net = net.to(device)
+    # net = models.resnet50(pretrained=True)  # resnet50
+    net = models.resnet101(pretrained=True)
+    net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])).to(device)
+
     if device == 'cuda:0':
         net = torch.nn.DataParallel(net)
         cudnn.benchmark = True
-    # 定义数据变换
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-    ])
-    net = torch.nn.DataParallel(net)
-    cudnn.benchmark = True
     if args.resume:
         # Load checkpoint.
         print('==> Resuming from checkpoint..')
@@ -175,20 +168,17 @@ if __name__ == '__main__':
     # 用SquareAttack攻击： 这里本来torchattack的示例是 n_queries=5000, 但跑着太慢了所以改成了100, 不知道该用什么参数
     # attack = attack.Square(net, norm='Linf', eps=8 / 255, n_queries=5000, n_restarts=1, p_init=.8, seed=0, verbose=False, targeted=False, loss='margin', resc_schedule=True)
 
-    # 用QueryAttack攻击：(不需要上面定义的net=resnet50了，这里用的是querynet_model)
-    attack = attack.QueryAttack(net, eps=8/255, num_iter=5000)
-    x_test, y_test, logits_clean, querynet_model = attack.get_xylogits(model_names='resnext101_32x8d')
-    querynet_model = querynet_model.to(device)
-    x_best = attack(querynet_model, x_test, y_test, logits_clean) # adv_images after 'iter' queries
+    # 用QueryAttack攻击：
+    attack = attack.QueryAttack(net, eps=8/255, num_iter=5000, num_x=10000)
+    
     
 
     # 测试原始模型在干净测试集上的准确度
-    # clean_accuracy = test(net, testloader)
-    # print(f'Accuracy on clean test images: {clean_accuracy:.2f}%')
+    clean_accuracy = test(net, testloader)
+    print(f'Accuracy on clean test images: {clean_accuracy:.2f}%')
 
     # 测试模型在攻击后的测试集上的准确度
-    # attack_accuracy = test(net, testloader, attack=attack)
-    attack_accuracy = test_query(querynet_model, x_best, y_test)  # for QueryAttack
+    attack_accuracy = test(net, testloader, attack=attack)
     print(f'Accuracy on attacked test images: {attack_accuracy:.2f}%')
 
 

@@ -184,40 +184,66 @@ print(f'Accuracy on attacked test images: {attack_accuracy:.2f}%')
 
 主要输出结果:	在 **5000** 次 query 之后, 图片的分类正确率为 **0.60%**
 ```shell
+==> Preparing data..
+==> Building model..
+Warning: not using default eps in the paper, which is linfty=12.75 for ImageNet.
+Accuracy on clean test images: 77.37%
+2024-08-12_12-41-45_image_net_ResNet101_linfty_eps8.0_Eval_Sqr+_DenseNet121-ResNet50-DenseNet169
+Load surrogate from attack/query/pretrained/netSTrained_DenseNet121_ResNet101_0.pth
+Load surrogate from attack/query/pretrained/netSTrained_ResNet50_ResNet101_0.pth
+Load surrogate from attack/query/pretrained/netSTrained_DenseNet169_ResNet101_0.pth
 +--------+-------------+-------------+-------------+-------------+-------------+
 | ATTACK | DenseNet121 |   ResNet50  | DenseNet169 |   Square+   |    Square   |
 +--------+-------------+-------------+-------------+-------------+-------------+
-| WEIGHT |    0.873    |    0.840    |    0.872    |    0.000    |    0.000    |
-| CHOSEN |    0.336    |    0.281    |    0.380    |    0.002    |    0.000    |
-+--------+-------------+-------------+-------------+-------------+-------------+
-+--------+-------------+-------------+-------------+-------------+-------------+
-| ATTACK | DenseNet121 |   ResNet50  | DenseNet169 |   Square+   |    Square   |
-+--------+-------------+-------------+-------------+-------------+-------------+
-| WEIGHT |    0.273    |    0.238    |    0.400    |    0.262    |    0.000    |
-| CHOSEN |    0.338    |    0.187    |    0.397    |    0.078    |    0.000    |
-+--------+-------------+-------------+-------------+-------------+-------------+
-+--------+-------------+-------------+-------------+-------------+-------------+
-| ATTACK | DenseNet121 |   ResNet50  | DenseNet169 |   Square+   |    Square   |
-+--------+-------------+-------------+-------------+-------------+-------------+
-| WEIGHT |    0.119    |    0.075    |    0.243    |    0.265    |    0.000    |
-| CHOSEN |    0.214    |    0.079    |    0.574    |    0.134    |    0.000    |
+| WEIGHT |    0.845    |    0.890    |    0.854    |    0.000    |    0.000    |
+| CHOSEN |    0.302    |    0.281    |    0.413    |    0.004    |    0.000    |
 +--------+-------------+-------------+-------------+-------------+-------------+
 +--------+-------------+-------------+-------------+-------------+-------------+
 | ATTACK | DenseNet121 |   ResNet50  | DenseNet169 |   Square+   |    Square   |
 +--------+-------------+-------------+-------------+-------------+-------------+
-| WEIGHT |    0.119    |    0.075    |    0.243    |    0.364    |    0.364    |
-| CHOSEN |    0.000    |    0.000    |    0.000    |    0.534    |    0.466    |
+| WEIGHT |    0.262    |    0.404    |    0.341    |    0.396    |    0.000    |
+| CHOSEN |    0.287    |    0.196    |    0.423    |    0.095    |    0.000    |
 +--------+-------------+-------------+-------------+-------------+-------------+
-Accuracy on attacked test images: 0.60%
++--------+-------------+-------------+-------------+-------------+-------------+
+| ATTACK | DenseNet121 |   ResNet50  | DenseNet169 |   Square+   |    Square   |
++--------+-------------+-------------+-------------+-------------+-------------+
+| WEIGHT |    0.031    |    0.191    |    0.146    |    0.244    |    0.000    |
+| CHOSEN |    0.134    |    0.340    |    0.431    |    0.095    |    0.000    |
++--------+-------------+-------------+-------------+-------------+-------------+
++--------+-------------+-------------+-------------+-------------+-------------+
+| ATTACK | DenseNet121 |   ResNet50  | DenseNet169 |   Square+   |    Square   |
++--------+-------------+-------------+-------------+-------------+-------------+
+| WEIGHT |    0.031    |    0.191    |    0.146    |    0.393    |    0.403    |
+| CHOSEN |    0.000    |    0.000    |    0.000    |    0.485    |    0.515    |
++--------+-------------+-------------+-------------+-------------+-------------+
+Accuracy on attacked test images: 0.20%
 ```
 
 需要注意:
 
 1. queryattack 需要用到另外写的 `test_query` 函数
-2. model 用的是 `VictimImagenet` (resnext101), 不是以前的 net
+2. 后面攻击用的 model 用 `VictimImagenet` 处理过, 但在测 clean_accuracy 的时候没有被处理过
 3. 运行 `test_imagenet.py` 后得到一个文件夹, 里面有 `adv` 和 `final_adv_images` 两个图片目录, 后者是 5000 次攻击之后得到的图片(但看起来两个目录里的图片是一样的)
 
+4. 前10轮左右的 query 比较慢，大概是因为用到了 square+ 等，后面的就快了
 
+5. 在文件 `utils.py` 里, 第201行, 写了 imagenet 的文件夹路径, 如果换位置记得改 (这里用的是实验室 AIMAX 里的路径)
+
+```python
+paths = {
+    # 'CDataC': 'data/cifar10-test.npy',
+    # 'CGTC':   'data/cifar10-test-GroundTruth.npy',
+    # 'CDataM': 'data/mnist-test.npy',
+    # 'CGTM':   'data/mnist-test-GroundTruth.npy',
+    #'CDataI': 'data/imagenet-val.npy',
+    #'CGTI':   'data/imagenet-val-GroundTruth.npy',
+    # 'CDataI': '/home/datasets/ILSVRC2012/val',
+    'CDataI': '/opt/data/common/ILSVRC2012/val',
+    'CGTI':   'data/val.txt'
+}
+```
+
+6. 
 
 
 
