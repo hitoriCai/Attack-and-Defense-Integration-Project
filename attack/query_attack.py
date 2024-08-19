@@ -974,7 +974,6 @@ def p_selection(p_init, it, num_iter):
 class QueryAttack():
     r"""
     Arguments:
-        model_names: default='resnext101_32x8d', type=str, [inception_v3, mnasnet1_0, resnext101_32x8d] for ImageNet.
         num_x: type=int, default=10000, number of samples for evaluation.
         num_srg: type=int, default=0, number of surrogates.
         use_nas: action='store_true', use NAS to train the surrogate.
@@ -985,9 +984,9 @@ class QueryAttack():
         num_iter: type=int, default=10000, maximum query times.
         gpu: type=str, default='1', GPU number(s).
     Examples:
-        >>> x_test, y_test, logits_clean = attack.QueryAttack.get_xylogits(model, model_names='resnext101_32x8d', num_x=10000, eps=8/255)
-        >>> attack = attack.QueryAttack(model, eps=8/255, iter=10000)
-        >>> adv_images = attack(model, x, y, logits_clean)     # images---x, labels---y
+        >>> x_test, y_test, logits_clean, net = attack.get_xylogits(model, testloader)
+        >>> x_adv = attack(net, x_test, y_test, logits_clean) # adv_images after 'iter' queries
+        >>> accuracy = test_query(net, x_adv, y_test, trans)
     """
 
     def __init__ (self, model, eps=8/255, num_iter=10000, num_x=10000):

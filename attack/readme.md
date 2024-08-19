@@ -19,9 +19,11 @@ attack_accuracy = test(net, testloader, attack=attack)
 
 
 
+
+
 ## 1. FGSM
 
-Accuracy on attacked test images: **23.48%**
+Accuracy on attacked test images: **7.90%**
 
 ```python
 attack = attack.FGSM(net, eps=8 / 255)
@@ -29,13 +31,17 @@ attack = attack.FGSM(net, eps=8 / 255)
 
 
 
+
+
 ## 2. PGD
 
-**Linf**		Accuracy on attacked test images:  **0.53%**
+**Linf**		Accuracy on attacked test images:  **0.02%**
 
 ```python
 attack = attack.PGD(net, eps=8 / 255, alpha=1 / 255, steps=10, random_start=True) 
 ```
+
+(在测试迁移性时, 得到在 pretrain 的 resnet101 上的正确率为 42.57%)
 
 **L2**		Accuracy on attacked test images: **34.39%**  (啊?)
 
@@ -45,13 +51,15 @@ attack = attack.PGDL2(net, eps=1.0, alpha=0.2, steps=10, random_start=True)
 
 
 
+
+
 ## 3. AutoPGD
 
 ### 3.1 APGD
 
 #### 3.1.1 ce
 
-**Linf**		Accuracy on attacked test images: **0.27%**
+**Linf**		Accuracy on attacked test images: **0.09%**
 
 ```python
 attack = attack.APGD(net, norm='Linf', eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
@@ -117,6 +125,8 @@ attack = attack.APGDT(net, norm='L2', eps=3.0, steps=10, n_restarts=1, seed=0, l
 
 
 
+
+
 ## 4. Square
 
 Accuracy on attacked test images: **23.76%**
@@ -124,10 +134,6 @@ Accuracy on attacked test images: **23.76%**
 ```python
 attack = attack.Square(net, norm='Linf', eps= 8/225, n_queries=100, n_restarts=1, p_init=.8, seed=0, verbose=False, targeted=False, loss='margin', resc_schedule=True)
 ```
-
-
-
-
 
 
 
@@ -243,7 +249,75 @@ paths = {
 }
 ```
 
-6. 
+
+
+
+
+## 6. MI
+
+(以下迁移攻击均为, linf, non-targeted)
+
+Accuracy on attacked test images: **10.24%**
+
+参数: （在PGD基础上）
+
+```python
+net = models.resnet50(pretrained=True)
+trans_net = models.resnet101(pretrained=True)   # for transferability
+attack = attack.MI(net, eps=8/255, num_iter=4, steps=10, momentum=0.9)
+```
+
+(关于test函数的for的循环速度，开了1个gpu的前提下，普通的PGD大概1s一轮，MI大概4s一轮，一共都是782轮)
+
+
+
+## 7. DI
+
+Accuracy on attacked test images: **13.10%**
+
+参数:（在PGD基础上，但不含MI）
+
+```python
+net = models.resnet50(pretrained=True)
+trans_net = models.resnet101(pretrained=True)   # for transferability
+attack = attack.DI(net, eps=8/255, num_iter=4, steps=10, prob=0.5)
+```
+
+（DI也大概4s一轮, 大概是因为num_iter=4）
+
+
+
+## 8. TI
+
+Accuracy on attacked test images: **34.97%**
+
+参数:（在PGD基础上，但不含MI和DI）
+
+```python
+net = models.resnet50(pretrained=True)
+trans_net = models.resnet101(pretrained=True)   # for transferability
+attack = attack.TI(net, eps=8/255, num_iter=4, steps=10, kernlen=15, nsig=3)
+```
+
+（TI也大概4s一轮）(从本来PGD迁移后的42.57%降到34.97%也算吗...)
+
+
+
+
+
+## 9. AoA
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
