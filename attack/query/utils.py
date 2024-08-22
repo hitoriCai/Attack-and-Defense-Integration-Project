@@ -225,49 +225,34 @@ def preprocess_data(dataset):
     np.save('data/%s-test-GroundTruth.npy' % dataset, label)
 
 
-def load_imagenet(n_ex, model):
-    current_dir = os.path.dirname(os.path.abspath(__file__))  ## 怎么只有这样写路径才对啊。。。
-    data_dir = os.path.join(current_dir, 'data')
-    val_file_path = os.path.join(data_dir, 'val.txt')
-    with open(val_file_path, 'r') as f: txt = f.read().split('\n')
-    # with open(paths['CGTI'], 'r') as f: txt = f.read().split('\n')
-    labels = {}
-    for item in txt:
-        if ' ' not in item: continue
-        file, cls = item.split(' ')
-        labels[file] = int(cls)     # file 是图片的名字
-    
+def load_imagenet(model, testloader, n_ex=10000):
     data = []
-    folders = os.listdir(paths['CDataI'])
     label = np.zeros((min([1000, n_ex]), 1000), dtype=np.uint8)
     label_done = []
     random.seed(0)
-    
-    for i in random.sample(range(len(folders)), len(folders)):
-        folder = folders[i]
-        files = os.listdir(paths['CDataI'] + '/' + folder)
-        for j in range(len(files)):
-            file = files[j]
-            lbl = labels[file]
+    testset = testloader.dataset
+    testset_length = len(testset)
+    for i in random.sample(range(testset_length), testset_length):
+        inputs, targets = testset[i] 
+        inputs = inputs.unsqueeze(0) 
+        targets = torch.tensor([targets])
+        for j in range(inputs.shape[0]):
+            img = inputs[j].cpu().numpy()
+            lbl = targets[j].item()
             if lbl in label_done: continue
-
-            img = np.array(PIL.Image.open(
-                paths['CDataI'] + '/' + folder + '/' + file).convert('RGB').resize((224, 224))) \
-                .astype(np.float32).transpose((2, 0, 1)) / 255
             prd = model(torch.tensor(img[np.newaxis, ...])).argmax(1)
             if prd != lbl: continue
-
             label[len(data), lbl] = 1
             data.append(img)
             label_done.append(lbl)
-        print('selecting samples in different classes...', len(label_done), '/',1000, end='\r')
-        if len(label_done) == min([1000, n_ex]): break
+        print('selecting samples in different classes...', len(label_done), '/', 1000, end='\r')
+        if len(label_done) == min([1000, n_ex]):
+            break
     data = np.array(data)
-
     x_test = np.array(data)
     y_test = np.array(label)
-    return x_test[:n_ex], y_test[:n_ex]
-    
+    return x_test[:n_ex], y_test[:n_ex] 
+
 
 def save_imgs(imgs, indexes, result_path_adv):
     assert imgs.shape[0] == indexes.shape[0], 'imgs shape %d != indexes shape %d' % (imgs.shape[0], indexes.shape[0])

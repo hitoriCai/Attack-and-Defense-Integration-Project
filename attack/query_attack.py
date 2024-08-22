@@ -9,12 +9,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from base_attacker import Attack
+from attack.base_attacker import Attack
 
-from query.surrogate import *
-from query.victim import *
+from attack.query.surrogate import *
+from attack.query.victim import *
 import prettytable as pt
-
 
 
 # Square ###############################################################
@@ -525,9 +524,9 @@ class QueryNet():
                                  n_channels=self.sampler.data.shape[1], softmax='easydl' in victim_name,
                                  gpu_id=0 if gpus == 1 else i % (gpus - 1) + 1))
 
-            save_info = 'query/pretrained/netSTrained_{}_{}_{}.pth'.format(surrogate_name, victim_name,
+            save_info = 'attack/query/pretrained/netSTrained_{}_{}_{}.pth'.format(surrogate_name, victim_name,
                                                                      0) if not self.use_nas else \
-                'query/pretrained/netSTrained_NAS{}_{}_latest.pth'.format(self.use_nas_layers[i], self.victim_name)
+                'attack/query/pretrained/netSTrained_NAS{}_{}_latest.pth'.format(self.use_nas_layers[i], self.victim_name)
 
             self.surrogate_save_paths.append(save_info)
             if os.path.exists(save_info):
@@ -769,7 +768,6 @@ class QueryNet():
             else:
                 self.sampler.update_buffer(save_only=False, **kwargs)  # FGSM and Square+ require to update buffer
         elif self.use_square_plus:  # Square+ only, no surrogates
-            print("use square+")
             self.sampler.update_buffer(save_only=False, **kwargs)
             self.sampler.update_lipschitz()  # only do this for square+
         elif self.use_square:  # Square only, no surrogates
@@ -779,7 +777,6 @@ class QueryNet():
             return None  # Square, do nothing
 
         elif max(self.attacker_eva_weights) == self.attacker_eva_weights[-2]:  # Square+, Square
-            print("use square+, square")
             assert x_new_index.max() == 1 and self.use_square_plus and self.use_square  # only valid when they are both adopted
             attacker_selected = [0 for _ in range(len(self.surrogate_names))]
             for attacker_id in range(x_new_index.max() + 1):
@@ -974,10 +971,9 @@ def p_selection(p_init, it, num_iter):
 
 
 
-class QueryAttack(Attack):
+class QueryAttack():
     r"""
     Arguments:
-        model_names: default='resnext101_32x8d', type=str, [inception_v3, mnasnet1_0, resnext101_32x8d] for ImageNet.
         num_x: type=int, default=10000, number of samples for evaluation.
         num_srg: type=int, default=0, number of surrogates.
         use_nas: action='store_true', use NAS to train the surrogate.
@@ -988,13 +984,12 @@ class QueryAttack(Attack):
         num_iter: type=int, default=10000, maximum query times.
         gpu: type=str, default='1', GPU number(s).
     Examples:
-        >>> x_test, y_test, logits_clean = attack.QueryAttack.get_xylogits(model, model_names='resnext101_32x8d', num_x=10000, eps=8/255)
-        >>> attack = attack.QueryAttack(model, eps=8/255, iter=10000)
-        >>> adv_images = attack(model, x, y, logits_clean)     # images---x, labels---y
+        >>> x_test, y_test, logits_clean, net = attack.get_xylogits(model, testloader)
+        >>> x_adv = attack(net, x_test, y_test, logits_clean) # adv_images after 'iter' queries
+        >>> accuracy = test_query(net, x_adv, y_test, trans)
     """
 
     def __init__ (self, model, eps=8/255, num_iter=10000, num_x=10000):
-        super().__init__("QueryAttack", model)
         # some parameters
         self.eps = eps
         self.num_iter = num_iter
@@ -1007,53 +1002,78 @@ class QueryAttack(Attack):
         self.p_init = 0.05 # hyperparameter of Square, the probability of changing a coordinate
         self.seed = 1 # for random number
         self.num_x = num_x # default: 10000, number of samples for evaluation
+        self.device = "cuda:0"
 
     
-    def get_xylogits(self, model_names):
-        # model_names: default: 'resnext101_32x8d', '[inception_v3, mnasnet1_0, resnext101_32x8d] for ImageNet'
-        np.random.seed(self.seed)
+    def get_xylogits(self, model, testloader):
         if self.use_nas: assert self.num_srg > 0
         os.environ["CUDA_VISIBLE_DEVICES"] = self.gpu
-
-        for model_name in model_names.split(','):
-            if model_name in ['inception_v3', 'mnasnet1_0', 'resnext101_32x8d']:
-                dataset = 'imagenet'
-            else:
-                raise ValueError('Invalid Victim Name!')
-
-        # imagenet 我们先假设model_name只有一个，即只选一个网络 #################################
         assert (not self.use_nas), 'NAS is not supported for ImageNet for resource concerns'
-        if not (self.eps == 12.75):  # (args.l2_attack and args.eps == 5) or (not args.l2_attack and eps == 12.75)
+        if not (self.eps == 12.75):
             print('Warning: not using default eps in the paper, which is linfty=12.75 for ImageNet.')
-        model = VictimImagenet(model_name, batch_size=self.batch_size)
-        x_test, y_test = load_imagenet(self.num_x, model)
+        model = VictimImagenet(model, batch_size=self.batch_size, device='cuda:0')
 
+        x_test, y_test = load_imagenet(model, testloader, self.num_x)
         logits_clean = model(x_test)
         corr_classified = logits_clean.argmax(1) == y_test.argmax(1)
-        print('Clean accuracy: {:.2%}'.format(np.mean(corr_classified)) + ' ' * 40)
+        # print('Clean accuracy: {:.2%}'.format(np.mean(corr_classified)) + ' ' * 40)
         y_test = dense_to_onehot(y_test.argmax(1), n_cls=1000)
 
         return x_test[corr_classified], y_test[corr_classified], logits_clean[corr_classified], model
-        # x_test = torch.tensor(x_test[corr_classified], dtype=torch.float32)
-        # y_test = torch.tensor(y_test[corr_classified], dtype=torch.float32)
-        # logits_clean = torch.tensor(logits_clean[corr_classified], dtype=torch.float32)
-
-        # return x_test, y_test, logits_clean
-
     
+    '''
+    def load_imagenet(n_ex, model):
+        current_dir = os.path.dirname(os.path.abspath(__file__))  ## 怎么只有这样写路径才对啊。。。
+        data_dir = os.path.join(current_dir, 'data')
+        val_file_path = os.path.join(data_dir, 'val.txt')
+        with open(val_file_path, 'r') as f: txt = f.read().split('\n')
+        # with open(paths['CGTI'], 'r') as f: txt = f.read().split('\n')
+        labels = {}
+        for item in txt:
+            if ' ' not in item: continue
+            file, cls = item.split(' ')
+            labels[file] = int(cls)     # file 是图片的名字
+        
+        data = []
+        folders = os.listdir(paths['CDataI'])
+        label = np.zeros((min([1000, n_ex]), 1000), dtype=np.uint8)
+        label_done = []
+        random.seed(0)
+        
+        for i in random.sample(range(len(folders)), len(folders)):
+            folder = folders[i]
+            files = os.listdir(paths['CDataI'] + '/' + folder)
+            for j in range(len(files)):
+                file = files[j]
+                lbl = labels[file]
+                if lbl in label_done: continue
 
-    def forward(self, model, x, y, logits_clean):
+                img = np.array(PIL.Image.open(
+                    paths['CDataI'] + '/' + folder + '/' + file).convert('RGB').resize((224, 224))) \
+                    .astype(np.float32).transpose((2, 0, 1)) / 255
+                prd = model(torch.tensor(img[np.newaxis, ...])).argmax(1)
+                if prd != lbl: continue
+
+                label[len(data), lbl] = 1
+                data.append(img)
+                label_done.append(lbl)
+            print('selecting samples in different classes...', len(label_done), '/',1000, end='\r')
+            if len(label_done) == min([1000, n_ex]): break
+        data = np.array(data)
+
+        x_test = np.array(data)
+        y_test = np.array(label)
+        return x_test[:n_ex], y_test[:n_ex]
+    '''
+
+
+    def __call__(self, model, x, y, logits_clean):
         os.environ["CUDA_VISIBLE_DEVICES"] = self.gpu
         np.random.seed(self.seed)
         min_val, max_val = 0, 1
         c, h, w = x.shape[1:]
-        # n_features = c * h * w
 
         x_best = np.clip(x + np.random.choice([-self.eps, self.eps], size=[x.shape[0], c, 1, w]), min_val, max_val)
-        x_best_init = x_best.copy()
-        y_test = torch.from_numpy(y)
-
-        # logits = model(torch.tensor(x_best).float())
 
         # 显存不够的话，分批计算logits
         num_batches = (len(x_best) + self.batch_size - 1) // self.batch_size  # 计算总批次数，确保最后的不足一个批次的数据也会被处理
@@ -1064,16 +1084,15 @@ class QueryAttack(Attack):
             x_batch = x_best[start_idx:end_idx]
             if x_batch.shape[0] == 0:
                 continue
-            x_batch = torch.from_numpy(x_batch).float().to('cuda:0')
             with torch.no_grad():
                 logits_batch = model(x_batch)
             logits_list.append(logits_batch)
             del x_batch
             del logits_batch
             torch.cuda.empty_cache()
-        logits = torch.cat(logits_list, dim=0)
+        logits = np.concatenate(logits_list, axis=0)
 
-        loss_min = get_margin_loss(torch.from_numpy(y).to('cuda:0'), logits)
+        loss_min = get_margin_loss(torch.from_numpy(y).to('cuda:0'), torch.from_numpy(logits).to('cuda:0'))
         n_queries = np.ones(x.shape[0]) * 2  # have queried with original samples and stripe samples
 
         surrogate_names = ['DenseNet121', 'ResNet50', 'DenseNet169', 'ResNet101', 'DenseNet201', 'VGG19'][:self.num_srg] # surrogates if not using nas
@@ -1092,9 +1111,7 @@ class QueryAttack(Attack):
         metrics_path = logger.result_paths['base'] + '/log/metrics'
 
         sampler = DataManager(x, logits_clean, self.eps, result_dir=result_path, loss_init=get_margin_loss(y, logits_clean))
-        # x_best_cpu = x_best.cpu().numpy()  # 转换为 NumPy 数组 .detach
-        # logits_cpu = logits.cpu().numpy()
-        sampler.update_buffer(x_best, logits.cpu().numpy(), loss_min, logger, targeted=False, data_indexes=None, margin_min=loss_min)
+        sampler.update_buffer(x_best, logits, loss_min, logger, targeted=False, data_indexes=None, margin_min=loss_min)
         sampler.update_lipschitz()
         querynet = QueryNet(sampler, 'ResNet101', surrogate_names, self.use_square_plus, True, self.use_nas, self.eps, self.batch_size)
 
@@ -1106,16 +1123,13 @@ class QueryAttack(Attack):
             for i in range(batch_num-1):
                 new_loss_value = get_margin_loss(y_ori[self.batch_size*(i+1):self.batch_size*(i+2)], srgt(torch.Tensor(x_adv[self.batch_size*(i+1):self.batch_size*(i+2)])).cpu().detach().numpy())
                 loss_value = np.concatenate((loss_value, new_loss_value), axis=0)
-                # loss_value = torch.cat((loss_value, new_loss_value), dim=0)
                 del new_loss_value
             return loss_value
 
-        time_start = time.time()
-        metrics = np.zeros([self.num_iter, 7])
         for i_iter in range(self.num_iter):
+            print('Attacking figures, iter =', i_iter+1, '/', self.num_iter, end='\r')
             # focus on unsuccessful AEs
             idx_to_fool = loss_min > 0
-            # x_curr, x_best_curr, y_curr, loss_min_curr = x[idx_to_fool], x_best[idx_to_fool], y[idx_to_fool], loss_min[idx_to_fool]
             x_curr = torch.from_numpy(x[idx_to_fool]).to(device)
             x_best_curr = torch.from_numpy(x_best[idx_to_fool]).to(device)
             y_curr = torch.from_numpy(y[idx_to_fool]).to(device)
@@ -1135,130 +1149,48 @@ class QueryAttack(Attack):
                 x_batch = x_q[start_idx:end_idx]
                 if x_batch.shape[0] == 0:
                     continue
-                x_batch = torch.from_numpy(x_batch).float().to('cuda:0')
                 with torch.no_grad():
                     logits_batch = model(x_batch)
                 logits_list.append(logits_batch)
                 del x_batch
                 del logits_batch
                 torch.cuda.empty_cache()
-            logits = torch.cat(logits_list, dim=0)
+            logits = np.concatenate(logits_list, axis=0)
 
-            loss = get_margin_loss(y_curr, logits)
+            loss = get_margin_loss(y_curr, torch.from_numpy(logits).to('cuda:0'))
             idx_improved = loss < loss_min_curr
             loss_min[idx_to_fool] = idx_improved * loss + ~idx_improved * loss_min_curr
             idx_improved = np.reshape(idx_improved, [-1, *[1] * len(x.shape[:-1])])
             x_best[idx_to_fool] = idx_improved * x_q+ ~idx_improved * x_best_curr.cpu().numpy()
             n_queries[idx_to_fool] += 1
-            # if i_iter == self.num_iter-1:
-            ppath = "/iter_{}".format(i_iter+1)
-            os.makedirs(logger.result_paths['adv'] + ppath, exist_ok=True)
-            save_imgs(x_best, indexes=np.arange(1000), result_path_adv=logger.result_paths['adv'] + ppath)
 
             # QueryNet's backward propagation
             if a is not None:
                 a = a.astype(np.int32)
-            message = querynet.backward(idx_improved, a, data_indexes=np.where(idx_to_fool)[0], margin_min=loss_min, img_adv=x_q.astype(np.float32), lbl_adv=logits.cpu().numpy(), loss=loss, logger=logger, targeted=False)
+            message = querynet.backward(idx_improved, a, data_indexes=np.where(idx_to_fool)[0], 
+            margin_min=loss_min, img_adv=x_q, lbl_adv=logits, loss=loss, logger=logger, targeted=False)
             if a is not None:
                 print(' '*80, end='\r')
                 log.print(message)
                 querynet.sampler.save(i_iter)
             
-
-            # logging
+            '''
+            # logging 即测试正确率的"原代码"
             acc_corr = (loss_min > 0.0).mean()
             mean_nq_all, mean_nq = np.mean(n_queries), np.mean(n_queries[loss_min <= 0])
             median_nq_all, median_nq = np.median(n_queries)-1, np.median(n_queries[loss_min <= 0])-1
             avg_loss = np.mean(loss_min)
-            elapse = time.time() - time_start
-            msg = '{}: Acc={:.2%}, AQ_suc={:.2f}, MQ_suc={:.1f}, AQ_all={:.2f}, MQ_all={:.1f}, ALoss_all={:.2f}, |D|={:d}, Time={:.1f}s'.\
-                format(i_iter + 1, acc_corr, mean_nq, median_nq, mean_nq_all, median_nq_all, avg_loss, querynet.sampler.clean_sample_indexes[-1], elapse)
-            log.print(msg) # if 'easydl' not in model.arch else msg + ', query=%d' % model.query)
-            metrics[i_iter] = [acc_corr, mean_nq, median_nq, mean_nq_all, median_nq_all, avg_loss, elapse]
-            np.save(metrics_path, metrics)
+            msg = '{}: Acc={:.2%}, AQ_suc={:.2f}, MQ_suc={:.1f}, AQ_all={:.2f}, MQ_all={:.1f}, ALoss_all={:.2f}, |D|={:d}'.\
+                format(i_iter + 1, acc_corr, mean_nq, median_nq, mean_nq_all, median_nq_all, avg_loss, querynet.sampler.clean_sample_indexes[-1])
+            log.print(msg)
             if acc_corr == 0: break
+            '''
 
-            # 测试每一轮的x_best的准确率
-            batch_size = 16
-            model.eval()
-            correct = 0
-            num_batches = (len(x_best) + batch_size - 1) // batch_size  # 计算总批次数
-            output_list = []
-            for i in range(num_batches):
-                start_idx = i * batch_size
-                end_idx = min(start_idx + batch_size, len(x_best))
-                x_ = x_best[start_idx:end_idx]
-                if x_.shape[0] == 0:
-                    continue
-                x_ = torch.from_numpy(x_).float().to('cuda')
-                with torch.no_grad():
-                    output_batch = model(x_)
-                output_list.append(output_batch)
-                del x_
-                del output_batch
-                torch.cuda.empty_cache()
-            outputs = torch.cat(output_list, dim=0)
-
-            _, predicted = torch.max(outputs.data, 1)
-            predicted = predicted.cpu()
-            total = y_test.size(0)
-            correct += (predicted == y_test).sum().item()
-            # 打印维度
-            print("Predicted shape:", predicted.shape)
-            print("y_test shape:", y_test.shape)
-
-            # 判断维度是否相同
-            if predicted.shape == y_test.shape:
-                print("The shapes are the same.")
-            else:
-                print("The shapes are different.")
-            # equal_pairs = predicted == y_test 
-            # correct = torch.sum(equal_pairs).item()  # 使用 .item() 来获取数值
-            accuracy = 100 * correct / total
-            msg_xbest = '{}: Accuracy of x_best in each iteration: {:.2f}%, correct = {}, total = {}'.\
-                format(i_iter + 1, accuracy, correct, total)
-            log.print(msg_xbest)
-
-            pixel_diff = x_best - x_best_init
-            # 计算差值的平均值
-            mean_diff = np.mean(np.abs(pixel_diff))
-            print("每个像素差值的平均值:", mean_diff.item())
-            
         torch.cuda.empty_cache()
-        # os.makedirs(logger.result_paths['adv']+"/x_q", exist_ok=True)
-        # save_imgs(x_q, indexes=np.arange(1000), result_path_adv=logger.result_paths['adv']+"./x_q")
+        ppath = "/final_adv_images"
+        os.makedirs(logger.result_paths['adv'][:-3] + ppath, exist_ok=True)
+        save_imgs(x_best, indexes=np.arange(1000), result_path_adv=logger.result_paths['adv'][:-3] + ppath)
+        
+        return x_best
 
-        return x_best_init, x_best
-
-
-'''
-    def QueryAttack(args):
-        query_net, eps, seed, l2_attack, num_iter, p_init, num_srg, use_square_plus, use_nas = \
-            (args.eps / 255 if not args.l2_attack else args.eps), (args.seed if args.seed != -1 else args.run_time), \
-            args.query_net, args.l2_attack, args.num_iter, args.p_init, args.num_srg, args.use_square_plus, args.use_nas
-        np.random.seed(args.seed)
-
-        if args.use_nas: assert args.num_srg > 0
-        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
-        log = Logger('')
-
-        for model_name in args.query_net.split(','):
-            if model_name in ['inception_v3', 'mnasnet1_0', 'resnext101_32x8d']:         dataset = 'imagenet'
-            else: raise ValueError('Invalid Victim Name!')
-
-            # imagenet
-            assert (not args.use_nas), 'NAS is not supported for ImageNet for resource concerns'
-            if not ((args.l2_attack and args.eps == 5) or (not args.l2_attack and args.eps == 12.75)):
-                print('Warning: not using default eps in the paper, which is l2=5 or linfty=12.75 for ImageNet.')
-            batch_size = 100 if model_name != 'resnext101_32x8d' else 32
-            model = VictimImagenet(model_name, batch_size=batch_size)
-            x_test, y_test = load_imagenet(args.num_x, model)
-
-            logits_clean = model(x_test)
-            corr_classified = logits_clean.argmax(1) == y_test.argmax(1)
-            print('Clean accuracy: {:.2%}'.format(np.mean(corr_classified)) + ' ' * 40)
-            y_test = dense_to_onehot(y_test.argmax(1), n_cls=10 if dataset != 'imagenet' else 1000)
-            for run_time in range(args.run_times):
-                attack(model, x_test[corr_classified], y_test[corr_classified], logits_clean[corr_classified], dataset, batch_size, run_time, args, log)
-'''
 

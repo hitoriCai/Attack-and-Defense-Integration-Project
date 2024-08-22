@@ -4,7 +4,7 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
-from base_attacker import Attack
+from attack.base_attacker import Attack
 
 # FGSM (Linf) #################################################################
 class FGSM(Attack):
@@ -110,7 +110,7 @@ class PGD(Attack):
             grad = torch.autograd.grad(
                 cost, adv_images, retain_graph=False, create_graph=False
             )[0]
-            adv_images = adv_images.detach() + self.alpha * grad.data.sign()
+            adv_images = adv_images.detach() + self.alpha * grad.data.sign() #
             adv_images.grad = None
             delta = torch.clamp(adv_images - images, min=-self.eps, max=self.eps)
             adv_images = torch.clamp(images + delta, min=0, max=1).detach()
