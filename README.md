@@ -80,8 +80,13 @@ net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], 
 - ``eps``: 对抗扰动大小，当指定为0时，为正常训练
 - ``params_start`` : 训练轨迹起始点，设置为0
 - ``params_end`` : 训练轨迹终止点，设置为301
+-  ``batch_sze`` : 批次大小，默认为256。如遇爆显存可以按照2的幂次方依次减小，如256->128->64->...
+- ``train_start``: 训练初始点，默认为-1
+- ``log_dir``: 日志存储地址，默认与模型保存地址相同
 
 在以上设置下，执行``train_dldr.sh``脚本，会提取``$DST``下 epoch 1到epoch60的训练轨迹，然后使用低维训练训练2个epoch，总训练epoch为62，加速比为$\frac{90-62}{90}=31.1\%$. 
 
 > 模型保存在哪里？
+>
+> 生成的模型会保存在DST的文件夹中，包含log.pt，ddp0.pt，ddp1.pt三个文件，其中log.pt为配置文件
 
