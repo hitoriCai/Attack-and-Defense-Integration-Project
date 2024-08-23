@@ -152,8 +152,8 @@ device=0,1
 model=resnet101
 wd_psgd=0.00001
 lr=0.3
-path=/opt/data/common/ILSVRC2012/
-DST=/opt/data/private/fgsm-at@eps:4_save_resnet18
+path=/opt/data/common/ILSVRC2012/    ##ImageNet数据集路径
+DST=/opt/data/private/fgsm-at@eps:4_save_resnet18    ##resnet101 fgsm训练的路径点
 CUDA_VISIBLE_DEVICES=$device python -m torch.distributed.launch --nproc_per_node 2 train_dldr.py \
         --epochs 2 --datasets $datasets --opt SGD --schedule step --worker 8 \
         --lr $lr --params_start $params_start  --params_end $params_end   --train_start -1 --wd $wd_psgd \
