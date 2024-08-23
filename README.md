@@ -57,14 +57,39 @@ net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], 
 参考``normal_training.sh``, 此训练脚本支持正常训练与对抗训练，可设置的参数有：
 
 - ``datasets`` : 默认为ImageNet
+
 - ``device`` : 单机多卡时使用的GPU编号，默认为0,1
+
 - ``model`` : 训练模型，设置为resnet101，参数量4500万
+
 - ``path`` : 为ImageNet数据集路径，其下应有train与val文件夹
+
 - ``epochs`` : 训练epoch数量，默认为90
+
 - ``DST`` : 模型保存路径, 将模型的训练轨迹保存在此路径下，默认每个epoch保存5个checkpoint
+
 - ``eps`` :  对抗扰动大小，当指定为0时，为正常训练
 
   在以上设置下，执行``normal_training.sh``脚本，会训练resnet101 90个epoch，保存$90*5+1=451$(1为初始化时的网络状态)个checkpoint到DST路径。
+  
+  
+  
+  下面给出``normal_training.sh``脚本案例：
+  
+  ````python
+  # without --eps $eps, meaning attack epsilon is zero, which means vanilla training
+  datasets=ImageNet
+  device=0,1
+  model=resnet101
+  path=/opt/data/common/ILSVRC2012/ ## imagenet测试集保存位置
+  epochs=90
+  DST=eps_8_save_$model    ##模型保存位置
+  eps=8    ##若eps==0，则为普通训练
+  CUDA_VISIBLE_DEVICES=$device  python3 normal_training.py -a $model \
+      --epochs $epochs --workers 8  --dist-url 'tcp://127.0.0.1:1234' \
+      --dist-backend 'nccl' --multiprocessing-distributed \
+      --world-size 1 --rank 0 $path --save_dir $DST --eps $eps
+  ````
 
 ### 3.2 使用SGD训练轨迹进行低维训练
 
@@ -89,4 +114,49 @@ net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], 
 > 模型保存在哪里？
 >
 > 生成的模型会保存在DST的文件夹中，包含log.pt，ddp0.pt，ddp1.pt三个文件，其中log.pt为配置文件
+
+模型输入：上述参数，SGD模型路径
+
+模型输出：TWA模型路径
+
+
+
+下面给出``train_dldr.sh``脚本在训练resnet101、vanilla训练时的案例：
+
+````python
+# TWA (DDP version) 60+2
+# without --eps $eps, meaning attack epsilon is zero, which means vanilla training
+datasets=ImageNet
+device=0,1
+model=resnet101
+wd_psgd=0.00001
+lr=0.3
+path=/opt/data/common/ILSVRC2012/    ##ImageNet数据集路径
+DST=/opt/data/private/checkpoint_resnet18_vanilla_save_DOT_NOT_DELETE    ##resnet101普通训练的路径点
+params_start=0
+params_end=301
+CUDA_VISIBLE_DEVICES=$device python -m torch.distributed.launch --nproc_per_node 2 train_dldr.py \
+        --epochs 2 --datasets $datasets --opt SGD --schedule step --worker 8 \
+        --lr $lr --params_start $params_start  --params_end $params_end  --train_start -1 --wd $wd_psgd \
+        --batch-size 256 --arch $model --save-dir $DST --log-dir $DST --eps 0
+````
+
+
+
+下面给出``train_dldr.sh``脚本在训练resnet101、fgsm训练时的案例：
+
+````python
+# with --eps $eps,  meaning adversarial training
+datasets=ImageNet
+device=0,1
+model=resnet101
+wd_psgd=0.00001
+lr=0.3
+path=/opt/data/common/ILSVRC2012/
+DST=/opt/data/private/fgsm-at@eps:4_save_resnet18
+CUDA_VISIBLE_DEVICES=$device python -m torch.distributed.launch --nproc_per_node 2 train_dldr.py \
+        --epochs 2 --datasets $datasets --opt SGD --schedule step --worker 8 \
+        --lr $lr --params_start $params_start  --params_end $params_end   --train_start -1 --wd $wd_psgd \
+        --batch-size 256 --arch $model --save-dir $DST --log-dir $DST --eps 4
+````
 
