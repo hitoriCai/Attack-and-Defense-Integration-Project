@@ -4,8 +4,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import os
+import heapq
 
 from attack.base_attacker import Attack
+from attack.gradcam.gradcam import *
+from attack.gradcam.gc_utils import *
 
 
 # MI (Non-targeted, linf) ##################################################################
@@ -171,7 +175,7 @@ class DI(Attack):
 # TI (Non-targeted, linf) ##################################################################
 class TI(Attack):
     r"""
-    TI Attack in the paper ''
+    TI Attack in the paper 'Evading Defenses to Transferable Adversarial Examples by Translation-Invariant Attacks'
     Distance Measure : Linf
     Based on PGDATtack, non-targeted
     Arguments:
@@ -260,5 +264,98 @@ class TI(Attack):
 
 
 
+# AoA ##################################################################
+class AoA(Attack):
+    r"""
+    AoA (Attack on Attention) in the pape 'Universal Adversarial Attack on Attention and the Resulting Dataset DAmageNetr'
+    Using grad-cam to calculate the attention map h(x,y)
+    Arguments:
+        model (nn.Module): model to attack.
+        model_dict (string):  a dictionary that contains 'type', 'arch', layer_name', 'input_size'(optional) as keys.
+        type (string): 'vgg', 'resnet', 'densenet', 'alexnet', 'squeezenet'. (Default: 'resnet')
+        eps (float): maximum perturbation. (Default: 8/255)
+        lamb (int): a trade-off between the attack on attention and cross entropy. (Default: 1000)
+        yita (int): the bound of Root Mean Squared Error. (Default: 7)
+        alpha (float): step size. (alpha = eps/num_iter, Default: 2/255)
+        steps (int): number of steps. (Default: 10)
+    Examples:
+        >>> attack = attack.AoA(net, eps=8/255, alpha=2, steps=10, lamb=1000, yita=7)
+    """
+    def __init__(self, model, eps=8/255, alpha=2, num_iter=4, lamb=1000, yita=7):
+        self.eps = eps
+        self.model = model
+        self.lamb = lamb
+        self.yita = yita
+        self.alpha = alpha
+        self.num_iter = num_iter
+        self.num_classes = 1000
+        self.device = "cuda:0"
+
+    def RMSE(self, x1, x2, N):
+        a = np.linalg.norm(x1 - x2) ** 2
+        b = np.sqrt(a / N)
+        return b
+
+    def __call__(self, x, y):
+        os.environ["CUDA_VISIBLE_DEVICES"] = self.device
+        c, h, w = x.shape[1:]
+        # 'layer4_bottleneck2_conv3'
+        model_dict = dict(type='resnet', arch=self.model, layer_name='layer4_basicblock1_conv2', input_size=(1, 3, 224, 224))
+        gradcam = GradCAM(model_dict)
+
+        logits = self.model(x)
+        # corr_classified = logits.argmax(1) == y
+        # x, y, logits = x[corr_classified], y[corr_classified], logits[corr_classified]
+
+        # values, indices = torch.topk(logits, 2, dim=1)
+        # y_ori = indices[:, 0]
+        # y_sec = indices[:, 1]  # logits里第二大可能性的index
+        values, indices = torch.topk(logits, 2, dim=1)
+        del logits
+        # print(logits.size())
+        y_ori = indices[:, 0]  # 选择第一个（即 top-1 类别），形状为 [batch_size, height, width]
+        y_sec = indices[:, 1] 
+
+        def AoAloss(x):
+            batch_size = x.size(0)  # 获取x的总batch大小（例如64）
+            h_ori, h_sec, logits_list = [], [], []
+            for i in range(0, batch_size):  # 这个gradcam暂时只能一张一张处理
+                h_ori_, logit_ori = gradcam(x[i], y_ori[i])
+                h_sec_, logit_sec = gradcam(x[i], y_sec[i])
+                h_ori.append(h_ori_)
+                h_sec.append(h_sec_)
+                logits_batch = self.model(x[i])
+                logits_list.append(logits_batch)
+                del h_ori_
+                del h_sec_
+                del logits_batch
+                torch.cuda.empty_cache()
+            h_ori = torch.cat(h_ori, dim=0)
+            h_sec = torch.cat(h_sec, dim=0)
+            L_log = torch.log(torch.norm(h_ori, p=1)) - torch.log(torch.norm(h_sec, p=1))
+            logits = torch.cat(logits_list, dim=0)
+            criterion = nn.CrossEntropyLoss()
+            L_ce = criterion(logits, y_ori)
+            L_AoA = L_log - self.lamb * L_ce
+            del logits
+            return L_AoA
+        
+        x_adv = x.to(self.device)
+        x_adv.requires_grad = True
+        N = c*h*w
+        k = 0
+        for _ in range(self.num_iter):
+            # while self.RMSE(x, x_adv) < self.yita:
+            x_adv.grad = None
+            aoa = AoAloss(x_adv)
+            g = torch.autograd.grad(aoa, x_adv, retain_graph=False, create_graph=False)[0].detach()
+            gg = g*N / torch.norm(g, p=1)
+            x_adv = torch.clamp(x_adv - self.alpha*gg, min=-self.eps, max=self.eps)
+            k += 1
+            del aoa
+            del g
+            torch.cuda.empty_cache()
+
+        return x_adv
 
 

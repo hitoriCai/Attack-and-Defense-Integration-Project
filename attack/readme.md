@@ -307,7 +307,15 @@ attack = attack.TI(net, eps=8/255, num_iter=4, steps=10, kernlen=15, nsig=3)
 
 ## 9. AoA
 
+Accuracy on attacked test images: **0.10%**
 
+AoA大约10s一轮（num_iter=4时），而一共有782轮。。。一共跑了两个半小时。。。
+
+```python
+net = models.resnet18(pretrained=True)		 # resnet50则1个gpu内存不够
+trans_net = models.resnet101(pretrained=True)   # for transferability
+attack = attack.AoA(net, eps=8/255, alpha=2, num_iter=4, lamb=1000, yita=7)
+```
 
 
 
