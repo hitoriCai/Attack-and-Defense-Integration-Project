@@ -10,38 +10,348 @@
 
 1. 测试数据的dataloader，其中使用的transform不能包含``transforms.Normalize``变换，
 2. 测试网络，使用``torchvision.models``的预训练网络即可，但需要经过``ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))``，将归一化变换加入网络输入侧
-3. 攻击方法，从``attack``中导入特定的攻击方法进行测试
+3. 攻击方法，从``attack``中导入特定的攻击方法进行测试, 需要 `import torchvision.models as models` 
+
+4. 本攻击代码用于 ImageNet, 因此要修改正确的 ImageNet 路径 `data_dir = '/your_dir/ILSVRC2012'`
+
+
 
 ### 1.1 白盒攻击
 
-#### 1.1.1 FGSM攻击
-``from somewhere import some attack``
-指定的参数有：
-- 攻击强度 
-- …
+参考 `attack/white_box.py`
 
-#### 1.1.2 PGD攻击与autoPGD
-….
+白盒攻击测试网络均为:
 
-测试方法
-``
-``` python
-from torchvision.models import resnet101
-
-net = resnet101(pretrained=True)
+```python
+net = models.resnet50(pretrained=True)
 net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
-
 ```
 
+#### 1.1.1 FGSM攻击
+
+指定的参数有：
+
+- `net`: 攻击网络, 默认为 `resnet50`
+
+- `eps`: 攻击强度 , 默认为 8/255
+
+测试方法:
+
+```python
+attack = attack.FGSM(net, eps=8 / 255)
+```
+
+攻击后图片分类正确率: Accuracy on attacked test images: **7.90%**
+
+
+
+#### 1.1.2 PGD攻击与autoPGD
+
+**PGD攻击:**
+
+指定的参数有：
+
+- `net`: 攻击网络, 默认为 `resnet50`
+- `eps`: 攻击强度 , 默认为 8/255
+
+- `alpha`: 步长(step size), 默认为 2/255
+
+测试方法:
+``` python
+attack = attack.PGD(net, eps=8 / 255, alpha=1 / 255, steps=10, random_start=True)  # Linf
+```
+
+攻击后图片分类正确率: Accuracy on attacked test images: **0.02%**
+
+
+
+**autoPGD攻击(APGD):**
+
+指定的参数有：
+
+- `net`: 攻击网络, 默认为 `resnet50`
+- `eps`: 攻击强度 , 默认为 8/255
+
+- `alpha`: 步长(step size), 默认为 2/255
+- `n_restarts`: 随机重启的次数, 默认为1
+- `seed`: 起点的随机数种子, 默认为0
+- `loss`: 损失函数的选择, 为`['ce', 'dlr'] `, 默认为 'ce' 
+- `eot_iter`: EOT的迭代次数, 默认为1
+- `rho`: 步长更新参数, 默认为0.75 
+- `verbose`: 是否打印进度, 默认为False
+
+APGD-ce 测试方法:
+
+```python
+attack = attack.APGD(net, eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
+```
+
+攻击后图片分类正确率: Accuracy on attacked test images: **0.09%**
+
+APGD-dlr 测试方法:
+
+```python
+attack = attack.APGD(net, eps=8/255, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False)
+```
+
+攻击后图片分类正确率: Accuracy on attacked test images: **0.00%**
+
+
+
+
+
 ### 1.2 查询攻击
+
+参考 `attack/query_attack.py`
+
 #### 1.2.1 Square查询攻击
+
+参考 `attack/query_attack.py` 里的 `Square` 类
+
+指定的参数有：
+
+- `net`: 攻击网络, 默认为 `resnet50`
+- `eps`: 攻击强度 , 默认为 8/255
+
+- `n_queries`: 最大查询次数, 默认为 100
+- `n_restarts`: 随机重启的次数, 默认为 1 
+- `p_init`: 控制正方形大小的参数, 默认为 0.8
+- `loss`: 损失函数的选择, 为`['ce', 'margin'] `, 默认为 'margin' 
+- `resc_schedule`: 根据 `n_queries` 调整 `p`, 默认值为True
+- `seed`: 起点的随机数种子, 默认为0
+- `verbose`: 是否打印进度, 默认为False
+
+测试网络:
+
+```python
+net = models.resnet50(pretrained=True)
+net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+```
+
+测试方法:
+
+```python
+attack = attack.Square(net, eps=8 / 255, n_queries=100, n_restarts=1, p_init=.8, seed=0, verbose=False, loss='margin', resc_schedule=True)
+```
+
+攻击后图片分类正确率: Accuracy on attacked test images: **30.86%**
+
+
 
 #### 1.2.2 QueryNet 查询迁移攻击
 
+相关代码:
+
+- `attack/query_attack.py` 里的 `QueryNet`, `PGDGeneratorInfty`, `PGDGenerator2`, `QueryAttack` 类
+- `attack/query` 文件夹
+- `attack/query_attack_sub` 文件夹
+
+指定的参数有:
+
+- `net`: 攻击网络, 默认为 `resnet50`
+- `eps`: 攻击强度 , 默认为 8/255
+
+- `num_x`: 用于评估的样本数量, 默认为10000
+- `num_srg`: 替代模型(surrogate)的数量, 默认为0
+- `use_nas`: 是否使用NAS训练替代模型, 默认为 `action='store_true'` 
+- `use_square_plus`: 是否使用Square+, 默认为 `action='store_true'`
+- `p_init`: Square的超参数，改变一个坐标的概率, 默认为0.05
+- `run_times`: 重复运行的次数, 默认为1 
+- `num_iter`: 最大查询次数, 默认为10000
+- `gpu`: GPU个数, 默认为'1' 
+
+测试网络: `resnet101`
+
+```python
+net = models.resnet101(pretrained=True)
+net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+```
+
+测试方法:
+
+```python
+attack = attack.QueryAttack(net, eps=8/255, num_iter=5000, num_x=10000)
+```
+
+输出:
+
+```shell
++--------+-------------+-------------+-------------+-------------+-------------+
+| ATTACK | DenseNet121 |   ResNet50  | DenseNet169 |   Square+   |    Square   |
++--------+-------------+-------------+-------------+-------------+-------------+
+| WEIGHT |    0.835    |    0.894    |    0.858    |    0.000    |    0.000    |
+| CHOSEN |    0.298    |    0.291    |    0.408    |    0.002    |    0.000    |
++--------+-------------+-------------+-------------+-------------+-------------+
++--------+-------------+-------------+-------------+-------------+-------------+
+| ATTACK | DenseNet121 |   ResNet50  | DenseNet169 |   Square+   |    Square   |
++--------+-------------+-------------+-------------+-------------+-------------+
+| WEIGHT |    0.229    |    0.358    |    0.335    |    0.312    |    0.000    |
+| CHOSEN |    0.286    |    0.210    |    0.409    |    0.095    |    0.000    |
++--------+-------------+-------------+-------------+-------------+-------------+
+... ...
++--------+-------------+-------------+-------------+-------------+-------------+
+| ATTACK | DenseNet121 |   ResNet50  | DenseNet169 |   Square+   |    Square   |
++--------+-------------+-------------+-------------+-------------+-------------+
+| WEIGHT |    0.068    |    0.188    |    0.113    |    0.293    |    0.452    |
+| CHOSEN |    0.000    |    0.000    |    0.000    |    0.313    |    0.687    |
++--------+-------------+-------------+-------------+-------------+-------------+
+```
+
+攻击后图片分类正确率: Accuracy on attacked test images: **0.20%**
+
+注意事项:
+
+1. 在测试方面, 有专门用于 QueryAttack 的测试函数 `test_query`, 进入函数前先进行如下预处理:
+
+   ```python
+   if hasattr(attack, 'get_xylogits'): # queryattack
+       model.eval()
+       x_test, y_test, logits_clean, net = attack.get_xylogits(model, testloader)
+       x_adv = attack(net, x_test, y_test, logits_clean) # adv_images after 'iter' queries
+       accuracy = test_query(net, x_adv, y_test, trans)
+   ```
+
+2. 后面攻击用的 model 用 `VictimImagenet` 处理过, 但在测 clean_accuracy 的时候没有被处理过
+
+3. 运行 `test_imagenet.py` 后得到一个文件夹, 里面有 `adv` 和 `final_adv_images` 两个图片目录, 后者是 5000 次攻击之后得到的图片(但看起来两个目录里的图片是一样的)
+
+4. 前10轮左右的 query 比较慢，是因为用到了 square+ 等，后面的就快了
+
+5. 在文件 `utils.py` 里, 第201行的 `'CDataI'` 写了 imagenet 的文件夹路径, 如果换位置记得改
+
+```python
+paths = {
+     ...
+    'CDataI': '/opt/data/common/ILSVRC2012/val',
+    'CGTI':   'data/val.txt'
+}
+```
+
+
+
+
+
 ### 1.3 迁移攻击
 
-#### 1.2.2 迁移攻击
-包括AOA,TI,MI,DI
+参考 `attack/transfer_attack.py`, 以下迁移攻击均为 linf, non-targeted
+
+MI, DI, TI 的测试网络均为: 在 `resnet50` 上生成攻击图片, 在 `resnet101` 上测试迁移后攻击的正确率
+
+```python
+net = models.resnet50(pretrained=True)
+trans_net = models.resnet101(pretrained=True)   # for transferability
+net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])).to(device)
+trans_net = ProcessedModel(trans_net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])).to(device)
+```
+
+AoA 测试网络把上面的 `resnet50` 换成 `resnet18 `即可
+
+#### 1.3.1 MI, DI, TI 攻击
+
+此处 MI, DI, TI 攻击均以 PGD-linf 为基础, 且分别只含 MI, DI, TI 的迁移加成. 后续可以根据自己需要来实现三种迁移攻击的叠加集成, 从而更好地提高迁移率.
+
+**MI攻击:**
+
+指定的参数有:
+
+- `net`: 攻击网络, 默认为 `resnet50`
+- `eps`: 攻击强度, 默认为 8/255
+- `num_iter`: MI攻击中的迭代次数, 默认为4
+- `alpha`: 步长(一般alpha = eps/num_iter),  默认为 2/255
+- `steps`: PGD中的循环次数, 默认为10
+- `random_start`: 是否使用delta的随机初始化, 默认为True
+
+测试方法:
+
+```python
+attack = attack.MI(net, eps=8/255, num_iter=4, steps=10, momentum=0.9)
+```
+
+攻击后图片分类正确率: Accuracy on attacked test images: **0.00%**
+
+
+
+**DI攻击:**
+
+指定的参数有:
+
+- `net`: 攻击网络, 默认为 `resnet50`
+- `eps`: 攻击强度, 默认为 8/255
+
+- `num_iter`: MI攻击中的迭代次数, 默认为4
+- `alpha`: 步长(一般 `alpha = eps/num_iter`),  默认为 2/255
+- `steps`: PGD中的循环次数, 默认为10
+
+- `prob`: 变换概率, 默认值为 0.5
+- `image_width`: 随机数的下界, 默认为 200
+- `image_resize`: 随机数的上界, 默认为 224
+
+- `random_start`: 是否使用delta的随机初始化, 默认为True
+
+测试方法:
+
+```python
+attack = attack.DI(net, eps=8/255, num_iter=4, steps=10, prob=0.5)
+```
+
+攻击后图片分类正确率: Accuracy on attacked test images: **0.00%**
+
+
+
+**TI攻击:**
+
+指定的参数有:
+
+- `net`: 攻击网络, 默认为 `resnet50`
+- `eps`: 攻击强度, 默认为 8/255
+
+- `num_iter`: MI攻击中的迭代次数, 默认为4
+- `alpha`: 步长 (一般 `alpha = eps/num_iter`),  默认为 2/255
+- `steps`: PGD中的循环次数, 默认为10
+
+- `kernlen`: 高斯核的大小, 默认为 15
+- `nsig`: 高斯分布的范围, 默认为 3
+
+- `random_start`: 是否使用delta的随机初始化, 默认为True
+
+测试方法:
+
+```python
+attack = attack.TI(net, eps=8/255, num_iter=4, steps=10, kernlen=15, nsig=3)
+```
+
+攻击后图片分类正确率: Accuracy on attacked test images: **0.00%**
+
+
+
+#### 1.3.2 AoA 攻击
+
+相关代码:
+
+- `attack/transfer_attack.py` 里的 `AoA` 类
+- `attack/gradcam` 文件夹, 用于得到注意力计算图
+
+指定的参数有:
+
+- `net`: 攻击网络, 默认为 `resnet18`
+- `eps`: 攻击强度, 默认为 8/255
+
+- `model_dict`: 包含 'type', 'arch', 'layer_name', 'input_size' 作为键的字典。
+- `type: 'vgg', 'resnet', 'densenet', 'alexnet', 'squeezenet' 等模型类型, 默认为 'resnet'
+- `lamb`: $\lambda$, 注意力攻击和交叉熵之间的关系, 默认为1000
+- `yita`: 均方根误差的界限, 默认为None (此时循环次数取决于 `num_iter`)
+- `alpha`: 步长 (一般 `alpha = eps/num_iter`),  默认为 2/255
+- `num_iter`: 循环次数, 默认为10
+
+攻击网络: `resnet18`; 测试网络: `resnet101`
+
+测试方法: (运行时间较长)
+
+```python
+attack = attack.AoA(net, eps=8/255, alpha=2, num_iter=4, lamb=1000, yita=None)
+```
+
+攻击后图片分类正确率: Accuracy on attacked test images: **0.00%**
 
 
 
@@ -90,6 +400,8 @@ net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], 
       --dist-backend 'nccl' --multiprocessing-distributed \
       --world-size 1 --rank 0 $path --save_dir $DST --eps $eps
   ````
+
+
 
 ### 3.2 使用SGD训练轨迹进行低维训练
 

@@ -1,11 +1,8 @@
-# AoA实现比较困难
-
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import os
-import heapq
 
 from attack.base_attacker import Attack
 from attack.gradcam.gradcam import *
@@ -17,7 +14,7 @@ class MI(Attack):
     r"""
     MI Attack in the paper 'Boosting Adversarial Attacks with Momentum'
     Distance Measure : Linf
-    Based on PGDATtack, non-targeted
+    Based on PGDAttack, non-targeted
     Arguments:
         model (nn.Module): model to attack.
         eps (float): maximum perturbation. (Default: 8/255)
@@ -92,7 +89,7 @@ class DI(Attack):
         alpha (float): step size. (alpha = eps/num_iter, Default: 2/255)
         steps (int): number of steps in PGD. (Default: 10)
         prob (float): transformation probability. (Default:0.5)
-        image_width (int): the lower bound of rnd. (Default:299)
+        image_width (int): the lower bound of rnd. (Default:200)
         image_resize (int): the upper bound of rnd. (Default:224)
         random_start (bool): using random initialization of delta. (Default: True)
     Examples:
@@ -163,8 +160,6 @@ class DI(Attack):
         return adv_images
 
     def __call__(self, images, labels):
-        # grad = torch.zeros([images.shape[0], images.shape[2], images.shape[3], 3]).to(self.device)
-        # grad = grad.permute(0, 3, 1, 2)
         for _ in range(0, self.num_iter):
             # print("begin DI, iter=", _+1, '/', self.num_iter, end='\r')
             images = self.di(images, labels)
@@ -231,17 +226,12 @@ class TI(Attack):
             adv_images.requires_grad = True
             # outputs = self.get_logits(self.input_diversity(adv_images))    # 这里先不融合DI
             outputs = self.get_logits(adv_images)
-            # Calculate loss
             cost = loss(outputs, labels)
-            
             # Update adversarial images
             noise0 = torch.autograd.grad(cost, adv_images, retain_graph=False, create_graph=False)[0]
             noise = noise0.data
             # 卷积 **TI关键步骤**
             noise = F.conv2d(noise, self.stack_kernel.to(self.device), padding=self.kernlen//2, groups=noise.shape[1])
-            # depthwise_conv = nn.Conv2d(in_channels=noise.size(1), out_channels=noise.size(1), kernel_size = self.stack_kernel.size()[2:], groups=noise.size(1), bias=False)
-            # depthwise_conv.weight.data = self.stack_kernel
-            # noise = depthwise_conv(noise)
             noise = noise / noise.abs().mean(dim=[1,2,3], keepdim=True)
             # noise = self.momentum * grad + noise   # 这里先不融合 MI
             
@@ -254,8 +244,6 @@ class TI(Attack):
         return adv_images
 
     def __call__(self, images, labels):
-        # grad = torch.zeros([images.shape[0], images.shape[2], images.shape[3], 3]).to(self.device)
-        # grad = grad.permute(0, 3, 1, 2)
         for _ in range(0, self.num_iter):
             # print("begin TI, iter=", _+1, '/', self.num_iter, end='\r')
             images = self.ti(images, labels)
@@ -275,13 +263,13 @@ class AoA(Attack):
         type (string): 'vgg', 'resnet', 'densenet', 'alexnet', 'squeezenet'. (Default: 'resnet')
         eps (float): maximum perturbation. (Default: 8/255)
         lamb (int): a trade-off between the attack on attention and cross entropy. (Default: 1000)
-        yita (int): the bound of Root Mean Squared Error. (Default: 7)
+        yita (int): the bound of Root Mean Squared Error. (Default: None)
         alpha (float): step size. (alpha = eps/num_iter, Default: 2/255)
-        steps (int): number of steps. (Default: 10)
+        num_iter (int): number of iterations. (Default: 4)
     Examples:
-        >>> attack = attack.AoA(net, eps=8/255, alpha=2, steps=10, lamb=1000, yita=7)
+        >>> attack = attack.AoA(net, eps=8/255, alpha=2, num_iter=4, lamb=1000, yita=None)
     """
-    def __init__(self, model, eps=8/255, alpha=2, num_iter=4, lamb=1000, yita=7):
+    def __init__(self, model, eps=8/255, alpha=2, num_iter=4, lamb=1000, yita=None):
         self.eps = eps
         self.model = model
         self.lamb = lamb
@@ -299,21 +287,14 @@ class AoA(Attack):
     def __call__(self, x, y):
         os.environ["CUDA_VISIBLE_DEVICES"] = self.device
         c, h, w = x.shape[1:]
-        # 'layer4_bottleneck2_conv3'
+        # layer_name: 是最后一个卷积层输出的特征层. (Default: 'layer4_basicblock1_conv2', for resnet18)
         model_dict = dict(type='resnet', arch=self.model, layer_name='layer4_basicblock1_conv2', input_size=(1, 3, 224, 224))
         gradcam = GradCAM(model_dict)
 
         logits = self.model(x)
-        # corr_classified = logits.argmax(1) == y
-        # x, y, logits = x[corr_classified], y[corr_classified], logits[corr_classified]
-
-        # values, indices = torch.topk(logits, 2, dim=1)
-        # y_ori = indices[:, 0]
-        # y_sec = indices[:, 1]  # logits里第二大可能性的index
         values, indices = torch.topk(logits, 2, dim=1)
         del logits
-        # print(logits.size())
-        y_ori = indices[:, 0]  # 选择第一个（即 top-1 类别），形状为 [batch_size, height, width]
+        y_ori = indices[:, 0]  # 选择第一个类别，形状为 [batch_size, height, width]
         y_sec = indices[:, 1] 
 
         def AoAloss(x):

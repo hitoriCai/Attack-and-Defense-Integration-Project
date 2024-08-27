@@ -25,41 +25,36 @@ class Square(Attack):
     Distance Measure : Linf, L2
     Arguments:
         model (nn.Module): model to attack.
-        norm (str): Lp-norm of the attack. ['Linf', 'L2'] (Default: 'Linf')
         eps (float): maximum perturbation. (Default: 8/255)
-        n_queries (int): max number of queries (each restart). (Default: 5000)
+        n_queries (int): max number of queries (each restart). (Default: 100)
         n_restarts (int): number of random restarts. (Default: 1)
         p_init (float): parameter to control size of squares. (Default: 0.8)
         loss (str): loss function optimized ['margin', 'ce'] (Default: 'margin')
         resc_schedule (bool): adapt schedule of p to n_queries (Default: True)
         seed (int): random seed for the starting point. (Default: 0)
         verbose (bool): print progress. (Default: False)
-        targeted (bool): targeted. (Default: False)
     Shape:
         - images: :math:`(N, C, H, W)` where `N = number of batches`, `C = number of channels`,        `H = height` and `W = width`. It must have a range [0, 1].
         - labels: :math:`(N)` where each value :math:`y_i` is :math:`0 \leq y_i \leq` `number of labels`.
         - output: :math:`(N, C, H, W)`.
     Examples::
-        >>> attack = attack.Square(model, norm='Linf', eps=8/255, n_queries=5000, n_restarts=1, p_init=.8, seed=0, verbose=False, targeted=False, loss='margin', resc_schedule=True)
+        >>> attack = attack.Square(model, eps=8/255, n_queries=100, n_restarts=1, p_init=.8, seed=0, verbose=False, loss='margin', resc_schedule=True)
         >>> adv_images = attack(images, labels)
     """
 
     def __init__(
         self,
         model,
-        norm="Linf",
         eps=8 / 255,
-        n_queries=5000,
+        n_queries=100,
         n_restarts=1,
         p_init=0.8,
         loss="margin",
         resc_schedule=True,
         seed=0,
         verbose=False,
-        targeted=False,
     ):
         super().__init__("Square", model)
-        self.norm = norm
         self.n_queries = n_queries
         self.eps = eps
         self.p_init = p_init
@@ -68,8 +63,6 @@ class Square(Attack):
         self.verbose = verbose
         self.loss = loss
         self.rescale_schedule = resc_schedule
-        self.supported_mode = ["default", "targeted"]
-        self.targeted = targeted
 
     def forward(self, images, labels):
         images = images.clone().detach().to(self.device)
@@ -79,7 +72,7 @@ class Square(Attack):
 
     def margin_and_loss(self, x, y):
         """
-        :param y:        correct labels if untargeted else target labels
+        :param y:        correct labels
         """
         logits = self.get_logits(x)
         xent = F.cross_entropy(logits, y, reduction="none")
@@ -88,19 +81,12 @@ class Square(Attack):
         logits[u, y] = -float("inf")
         y_others = logits.max(dim=-1)[0]
 
-        if not self.targeted:
-            if self.loss == "ce":
-                return y_corr - y_others, -1.0 * xent
-            elif self.loss == "margin":
-                return y_corr - y_others, y_corr - y_others
-        else:
-            if self.loss == "ce":
-                return y_others - y_corr, xent
-            elif self.loss == "margin":
-                return y_others - y_corr, y_others - y_corr
+        if self.loss == "ce":
+            return y_corr - y_others, -1.0 * xent
+        elif self.loss == "margin":
+            return y_corr - y_others, y_corr - y_others
 
     def init_hyperparam(self, x):
-        assert self.norm in ["Linf", "L2"]
         assert not self.eps is None
         assert self.loss in ["ce", "margin"]
         if self.device is None:
@@ -122,17 +108,8 @@ class Square(Attack):
         return t.long()
 
     def normalize_delta(self, x):
-        if self.norm == "Linf":
-            t = x.abs().view(x.shape[0], -1).max(1)[0]
-            return x / (t.view(-1, *([1] * self.ndims)) + 1e-12)
-        elif self.norm == "L2":
-            t = (x ** 2).view(x.shape[0], -1).sum(-1).sqrt()
-            return x / (t.view(-1, *([1] * self.ndims)) + 1e-12)
-
-    def lp_norm(self, x):
-        if self.norm == "L2":
-            t = (x ** 2).view(x.shape[0], -1).sum(-1).sqrt()
-            return t.view(-1, *([1] * self.ndims))
+        t = x.abs().view(x.shape[0], -1).max(1)[0]
+        return x / (t.view(-1, *([1] * self.ndims)) + 1e-12)
 
     def eta_rectangles(self, x, y):
         delta = torch.zeros([x, y]).to(self.device)
@@ -192,253 +169,102 @@ class Square(Attack):
             n_features = c * h * w
             n_ex_total = x.shape[0]
 
-            if self.norm == "Linf":
-                x_best = torch.clamp(
-                    x + self.eps * self.random_choice([x.shape[0], c, 1, w]), 0.0, 1.0
+            x_best = torch.clamp(
+                x + self.eps * self.random_choice([x.shape[0], c, 1, w]), 0.0, 1.0
+            )
+            margin_min, loss_min = self.margin_and_loss(x_best, y)
+            n_queries = torch.ones(x.shape[0]).to(self.device)
+            s_init = int(math.sqrt(self.p_init * n_features / c))
+
+            for i_iter in range(self.n_queries):
+                idx_to_fool = (margin_min > 0.0).nonzero().flatten()
+                if len(idx_to_fool) == 0:
+                    break
+                x_curr = self.check_shape(x[idx_to_fool])
+                x_best_curr = self.check_shape(x_best[idx_to_fool])
+                y_curr = y[idx_to_fool]
+                if len(y_curr.shape) == 0:
+                    y_curr = y_curr.unsqueeze(0)
+                margin_min_curr = margin_min[idx_to_fool]
+                loss_min_curr = loss_min[idx_to_fool]
+
+                p = self.p_selection(i_iter)
+                s = max(int(round(math.sqrt(p * n_features / c))), 1)
+                vh = self.random_int(0, h - s)
+                vw = self.random_int(0, w - s)
+                new_deltas = torch.zeros([c, h, w]).to(self.device)
+                new_deltas[:, vh : vh + s, vw : vw + s] = (
+                    2.0 * self.eps * self.random_choice([c, 1, 1])
                 )
-                margin_min, loss_min = self.margin_and_loss(x_best, y)
-                n_queries = torch.ones(x.shape[0]).to(self.device)
-                s_init = int(math.sqrt(self.p_init * n_features / c))
 
-                for i_iter in range(self.n_queries):
-                    idx_to_fool = (margin_min > 0.0).nonzero().flatten()
-                    if len(idx_to_fool) == 0:
-                        break
-                    x_curr = self.check_shape(x[idx_to_fool])
-                    x_best_curr = self.check_shape(x_best[idx_to_fool])
-                    y_curr = y[idx_to_fool]
-                    if len(y_curr.shape) == 0:
-                        y_curr = y_curr.unsqueeze(0)
-                    margin_min_curr = margin_min[idx_to_fool]
-                    loss_min_curr = loss_min[idx_to_fool]
-
-                    p = self.p_selection(i_iter)
-                    s = max(int(round(math.sqrt(p * n_features / c))), 1)
-                    vh = self.random_int(0, h - s)
-                    vw = self.random_int(0, w - s)
-                    new_deltas = torch.zeros([c, h, w]).to(self.device)
-                    new_deltas[:, vh : vh + s, vw : vw + s] = (
-                        2.0 * self.eps * self.random_choice([c, 1, 1])
-                    )
-
-                    x_new = x_best_curr + new_deltas
-                    x_new = torch.min(
-                        torch.max(x_new, x_curr - self.eps), x_curr + self.eps
-                    )
-                    x_new = torch.clamp(x_new, 0.0, 1.0)
-                    x_new = self.check_shape(x_new)
-
-                    margin, loss = self.margin_and_loss(x_new, y_curr)
-                    # update loss if new loss is better
-                    idx_improved = (loss < loss_min_curr).float()
-                    loss_min[idx_to_fool] = (
-                        idx_improved * loss + (1.0 - idx_improved) * loss_min_curr
-                    )
-
-                    # update margin and x_best if new loss is better
-                    # or misclassification
-                    idx_miscl = (margin <= 0.0).float()
-                    idx_improved = torch.max(idx_improved, idx_miscl)
-
-                    margin_min[idx_to_fool] = (
-                        idx_improved * margin + (1.0 - idx_improved) * margin_min_curr
-                    )
-                    idx_improved = idx_improved.reshape([-1, *[1] * len(x.shape[:-1])])
-                    x_best[idx_to_fool] = (
-                        idx_improved * x_new + (1.0 - idx_improved) * x_best_curr
-                    )
-                    n_queries[idx_to_fool] += 1.0
-
-                    ind_succ = (margin_min <= 0.0).nonzero().squeeze()
-                    if self.verbose and ind_succ.numel() != 0:
-                        print(
-                            "{}".format(i_iter + 1),
-                            "- success rate={}/{} ({:.2%})".format(
-                                ind_succ.numel(),
-                                n_ex_total,
-                                float(ind_succ.numel()) / n_ex_total,
-                            ),
-                            "- avg # queries={:.1f}".format(
-                                n_queries[ind_succ].mean().item()
-                            ),
-                            "- med # queries={:.1f}".format(
-                                n_queries[ind_succ].median().item()
-                            ),
-                            "- loss={:.3f}".format(loss_min.mean()),
-                        )
-
-                    if ind_succ.numel() == n_ex_total:
-                        break
-
-            elif self.norm == "L2":
-                delta_init = torch.zeros_like(x)
-                s = h // 5
-                sp_init = (h - s * 5) // 2
-                vh = sp_init + 0
-                for _ in range(h // s):
-                    vw = sp_init + 0
-                    for _ in range(w // s):
-                        delta_init[:, :, vh : vh + s, vw : vw + s] += self.eta(s).view(
-                            1, 1, s, s
-                        ) * self.random_choice([x.shape[0], c, 1, 1])
-                        vw += s
-                    vh += s
-
-                x_best = torch.clamp(
-                    x + self.normalize_delta(delta_init) * self.eps, 0.0, 1.0
+                x_new = x_best_curr + new_deltas
+                x_new = torch.min(
+                    torch.max(x_new, x_curr - self.eps), x_curr + self.eps
                 )
-                margin_min, loss_min = self.margin_and_loss(x_best, y)
-                n_queries = torch.ones(x.shape[0]).to(self.device)
-                s_init = int(math.sqrt(self.p_init * n_features / c))
+                x_new = torch.clamp(x_new, 0.0, 1.0)
+                x_new = self.check_shape(x_new)
 
-                for i_iter in range(self.n_queries):
-                    idx_to_fool = (margin_min > 0.0).nonzero().flatten()
-                    if len(idx_to_fool) == 0:
-                        break
+                margin, loss = self.margin_and_loss(x_new, y_curr)
+                # update loss if new loss is better
+                idx_improved = (loss < loss_min_curr).float()
+                loss_min[idx_to_fool] = (
+                    idx_improved * loss + (1.0 - idx_improved) * loss_min_curr
+                )
 
-                    x_curr = self.check_shape(x[idx_to_fool])
-                    x_best_curr = self.check_shape(x_best[idx_to_fool])
-                    y_curr = y[idx_to_fool]
-                    if len(y_curr.shape) == 0:
-                        y_curr = y_curr.unsqueeze(0)
-                    margin_min_curr = margin_min[idx_to_fool]
-                    loss_min_curr = loss_min[idx_to_fool]
+                # update margin and x_best if new loss is better
+                # or misclassification
+                idx_miscl = (margin <= 0.0).float()
+                idx_improved = torch.max(idx_improved, idx_miscl)
 
-                    delta_curr = x_best_curr - x_curr
-                    p = self.p_selection(i_iter)
-                    s = max(int(round(math.sqrt(p * n_features / c))), 3)
-                    if s % 2 == 0:
-                        s += 1
+                margin_min[idx_to_fool] = (
+                    idx_improved * margin + (1.0 - idx_improved) * margin_min_curr
+                )
+                idx_improved = idx_improved.reshape([-1, *[1] * len(x.shape[:-1])])
+                x_best[idx_to_fool] = (
+                    idx_improved * x_new + (1.0 - idx_improved) * x_best_curr
+                )
+                n_queries[idx_to_fool] += 1.0
 
-                    vh = self.random_int(0, h - s)
-                    vw = self.random_int(0, w - s)
-                    new_deltas_mask = torch.zeros_like(x_curr)
-                    new_deltas_mask[:, :, vh : vh + s, vw : vw + s] = 1.0
-                    norms_window_1 = (
-                        (delta_curr[:, :, vh : vh + s, vw : vw + s] ** 2)
-                        .sum(dim=(-2, -1), keepdim=True)
-                        .sqrt()
+                ind_succ = (margin_min <= 0.0).nonzero().squeeze()
+                if self.verbose and ind_succ.numel() != 0:
+                    print(
+                        "{}".format(i_iter + 1),
+                        "- success rate={}/{} ({:.2%})".format(
+                            ind_succ.numel(),
+                            n_ex_total,
+                            float(ind_succ.numel()) / n_ex_total,
+                        ),
+                        "- avg # queries={:.1f}".format(
+                            n_queries[ind_succ].mean().item()
+                        ),
+                        "- med # queries={:.1f}".format(
+                            n_queries[ind_succ].median().item()
+                        ),
+                        "- loss={:.3f}".format(loss_min.mean()),
                     )
 
-                    vh2 = self.random_int(0, h - s)
-                    vw2 = self.random_int(0, w - s)
-                    new_deltas_mask_2 = torch.zeros_like(x_curr)
-                    new_deltas_mask_2[:, :, vh2 : vh2 + s, vw2 : vw2 + s] = 1.0
-
-                    norms_image = self.lp_norm(x_best_curr - x_curr)
-                    mask_image = torch.max(new_deltas_mask, new_deltas_mask_2)
-                    norms_windows = self.lp_norm(delta_curr * mask_image)
-
-                    new_deltas = torch.ones([x_curr.shape[0], c, s, s]).to(self.device)
-                    new_deltas *= self.eta(s).view(1, 1, s, s) * self.random_choice(
-                        [x_curr.shape[0], c, 1, 1]
-                    )
-                    old_deltas = delta_curr[:, :, vh : vh + s, vw : vw + s] / (
-                        1e-12 + norms_window_1
-                    )
-                    new_deltas += old_deltas
-                    new_deltas = (
-                        new_deltas
-                        / (
-                            1e-12
-                            + (new_deltas ** 2).sum(dim=(-2, -1), keepdim=True).sqrt()
-                        )
-                        * (
-                            torch.max(
-                                (self.eps * torch.ones_like(new_deltas)) ** 2
-                                - norms_image ** 2,
-                                torch.zeros_like(new_deltas),
-                            )
-                            / c
-                            + norms_windows ** 2
-                        ).sqrt()
-                    )
-                    delta_curr[:, :, vh2 : vh2 + s, vw2 : vw2 + s] = 0.0
-                    delta_curr[:, :, vh : vh + s, vw : vw + s] = new_deltas + 0
-
-                    x_new = torch.clamp(
-                        x_curr + self.normalize_delta(delta_curr) * self.eps, 0.0, 1.0
-                    )
-                    x_new = self.check_shape(x_new)
-                    norms_image = self.lp_norm(x_new - x_curr)
-
-                    margin, loss = self.margin_and_loss(x_new, y_curr)
-                    # update loss if new loss is better
-                    idx_improved = (loss < loss_min_curr).float()
-                    loss_min[idx_to_fool] = (
-                        idx_improved * loss + (1.0 - idx_improved) * loss_min_curr
-                    )
-
-                    # update margin and x_best if new loss is better
-                    # or misclassification
-                    idx_miscl = (margin <= 0.0).float()
-                    idx_improved = torch.max(idx_improved, idx_miscl)
-
-                    margin_min[idx_to_fool] = (
-                        idx_improved * margin + (1.0 - idx_improved) * margin_min_curr
-                    )
-                    idx_improved = idx_improved.reshape([-1, *[1] * len(x.shape[:-1])])
-                    x_best[idx_to_fool] = (
-                        idx_improved * x_new + (1.0 - idx_improved) * x_best_curr
-                    )
-                    n_queries[idx_to_fool] += 1.0
-
-                    ind_succ = (margin_min <= 0.0).nonzero().squeeze()
-                    if self.verbose and ind_succ.numel() != 0:
-                        print(
-                            "{}".format(i_iter + 1),
-                            "- success rate={}/{} ({:.2%})".format(
-                                ind_succ.numel(),
-                                n_ex_total,
-                                float(ind_succ.numel()) / n_ex_total,
-                            ),
-                            "- avg # queries={:.1f}".format(
-                                n_queries[ind_succ].mean().item()
-                            ),
-                            "- med # queries={:.1f}".format(
-                                n_queries[ind_succ].median().item()
-                            ),
-                            "- loss={:.3f}".format(loss_min.mean()),
-                        )
-
-                    assert (x_new != x_new).sum() == 0
-                    assert (x_best != x_best).sum() == 0
-
-                    if ind_succ.numel() == n_ex_total:
-                        break
+                if ind_succ.numel() == n_ex_total:
+                    break
 
         return n_queries, x_best
 
     def perturb(self, x, y=None):
         """
         :param x:           clean images
-        :param y:           untargeted attack -> clean labels,
-                            if None we use the predicted labels
-                            targeted attack -> target labels, if None random classes,
-                            different from the predicted ones, are sampled
+        :param y:           clean labels
         """
         self.init_hyperparam(x)
         adv = x.clone()
         if y is None:
-            if not self.targeted:
-                with torch.no_grad():
-                    output = self.get_logits(x)
-                    y_pred = output.max(1)[1]
-                    y = y_pred.detach().clone().long().to(self.device)
-            else:
-                with torch.no_grad():
-                    y = self.get_target_label(x, None)
+            with torch.no_grad():
+                output = self.get_logits(x)
+                y_pred = output.max(1)[1]
+                y = y_pred.detach().clone().long().to(self.device)
         else:
-            if not self.targeted:
-                y = y.detach().clone().long().to(self.device)
-            else:
-                y = self.get_target_label(x, y)
-
-        if not self.targeted:
-            acc = self.get_logits(x).max(1)[1] == y
-        else:
-            acc = self.get_logits(x).max(1)[1] != y
-
+            y = y.detach().clone().long().to(self.device)
+            
+        acc = self.get_logits(x).max(1)[1] == y
+        
         startt = time.time()
         torch.random.manual_seed(self.seed)
         torch.cuda.random.manual_seed(self.seed)
@@ -453,10 +279,7 @@ class Square(Attack):
 
                 _, adv_curr = self.attack_single_run(x_to_fool, y_to_fool)
                 output_curr = self.get_logits(adv_curr)
-                if not self.targeted:
-                    acc_curr = output_curr.max(1)[1] == y_to_fool
-                else:
-                    acc_curr = output_curr.max(1)[1] != y_to_fool
+                acc_curr = output_curr.max(1)[1] == y_to_fool
                 ind_curr = (acc_curr == 0).nonzero().squeeze()
 
                 acc[ind_to_fool[ind_curr]] = 0
@@ -998,7 +821,7 @@ class QueryAttack():
         self.dataset = 'image_net'
         self.use_square_plus = True # use Square+
         self.use_nas = False # don't use NAS to train the surrogate
-        self.batch_size = 16 # batch_size = 100 if model_name != 'resnext101_32x8d' else 32
+        self.batch_size = 16
         self.p_init = 0.05 # hyperparameter of Square, the probability of changing a coordinate
         self.seed = 1 # for random number
         self.num_x = num_x # default: 10000, number of samples for evaluation
@@ -1030,12 +853,12 @@ class QueryAttack():
 
         x_best = np.clip(x + np.random.choice([-self.eps, self.eps], size=[x.shape[0], c, 1, w]), min_val, max_val)
 
-        # 显存不够的话，分批计算logits
-        num_batches = (len(x_best) + self.batch_size - 1) // self.batch_size  # 计算总批次数，确保最后的不足一个批次的数据也会被处理
+        # If there is not enough gpu memory, calculate the logits in batches.
+        num_batches = (len(x_best) + self.batch_size - 1) // self.batch_size  
         logits_list = []
         for i in range(num_batches):
             start_idx = i * self.batch_size
-            end_idx = min(start_idx + self.batch_size, len(x_best))  # 确保索引不超出数据范围
+            end_idx = min(start_idx + self.batch_size, len(x_best))
             x_batch = x_best[start_idx:end_idx]
             if x_batch.shape[0] == 0:
                 continue
@@ -1063,7 +886,6 @@ class QueryAttack():
         logger = LoggerUs(result_path)
         os.makedirs(result_path + '/log', exist_ok=True)
         log.reset_path(result_path + '/log/main.log')
-        metrics_path = logger.result_paths['base'] + '/log/metrics'
 
         sampler = DataManager(x, logits_clean, self.eps, result_dir=result_path, loss_init=get_margin_loss(y, logits_clean))
         sampler.update_buffer(x_best, logits, loss_min, logger, targeted=False, data_indexes=None, margin_min=loss_min)
@@ -1095,12 +917,12 @@ class QueryAttack():
 
             # query
             # logits = model(x_q)
-            # 显存不够的话，分批计算logits
-            num_batches = (len(x_q) + self.batch_size - 1) // self.batch_size  # 计算总批次数，确保最后的不足一个批次的数据也会被处理
+            # If there is not enough gpu memory, calculate the logits in batches.
+            num_batches = (len(x_q) + self.batch_size - 1) // self.batch_size 
             logits_list = []
             for i in range(num_batches):
                 start_idx = i * self.batch_size
-                end_idx = min(start_idx + self.batch_size, len(x_q))  # 确保索引不超出数据范围
+                end_idx = min(start_idx + self.batch_size, len(x_q))
                 x_batch = x_q[start_idx:end_idx]
                 if x_batch.shape[0] == 0:
                     continue
@@ -1129,18 +951,6 @@ class QueryAttack():
                 log.print(message)
                 querynet.sampler.save(i_iter)
             
-            '''
-            # logging 即测试正确率的"原代码"
-            acc_corr = (loss_min > 0.0).mean()
-            mean_nq_all, mean_nq = np.mean(n_queries), np.mean(n_queries[loss_min <= 0])
-            median_nq_all, median_nq = np.median(n_queries)-1, np.median(n_queries[loss_min <= 0])-1
-            avg_loss = np.mean(loss_min)
-            msg = '{}: Acc={:.2%}, AQ_suc={:.2f}, MQ_suc={:.1f}, AQ_all={:.2f}, MQ_all={:.1f}, ALoss_all={:.2f}, |D|={:d}'.\
-                format(i_iter + 1, acc_corr, mean_nq, median_nq, mean_nq_all, median_nq_all, avg_loss, querynet.sampler.clean_sample_indexes[-1])
-            log.print(msg)
-            if acc_corr == 0: break
-            '''
-
         torch.cuda.empty_cache()
         ppath = "/final_adv_images"
         os.makedirs(logger.result_paths['adv'][:-3] + ppath, exist_ok=True)
