@@ -34,7 +34,6 @@ class AAALinear(nn.Module):
                  num_iter=100, 
                  calibration_loss_weight=5, 
                  optimizer_lr=0.1, 
-                 do_softmax=False, 
                  **kwargs):
         super(AAALinear, self).__init__()
         self.dataset = 'imagenet'

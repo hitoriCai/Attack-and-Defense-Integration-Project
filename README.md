@@ -370,6 +370,47 @@ attack = attack.AoA(net, eps=8/255, alpha=2, num_iter=4, lamb=1000, yita=None)
 
 
 
+## 2. 防御方法
+
+相关代码位于``defence``路径中，测试函数参见```test_blackbox_defence.py```.
+
+### 2.1 AAA
+
+使用方法：包装一个model的前向函数，如下所示。
+
+```python
+from defence import AAALinear
+net = models.resnet152(pretrained=True)
+net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+net = AAALinear(cnn=net, arch="resnet101", device="cuda:0", attractor_interval=4, reverse_step=1, num_iter=100, calibration_loss_weight=5, optimizer_lr=0.1)
+```
+
+其中，```cnn```为需要包装的网络，``device``指定tensor设备，其余参数保持默认即可。
+
+### 2.2 UniG
+
+使用方法：包装一个model的前向函数，如下所示。
+
+```python
+from defence import UniGModel
+net = models.resnet152(pretrained=True)
+net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+model = UniGModel(model=model, module_name='avgpool', head_name='fc',epoch=5, lr=0.01, delta=0.2, ifcombine=False)
+```
+
+
+
+
+
+### 2.3 测试
+
+测试网络为ResNet152，使用100查询的Square Attack攻击网络，测试结果如下：
+
+|              | Clean Accuracy | Square Accuracy |
+| :----------: | :------------: | :-------------: |
+|  未防御模型  |     0.783      |      0.422      |
+| AAA防御模型  |     0.783      |      0.670      |
+| UniG防御模型 |                |                 |
 
 
 
