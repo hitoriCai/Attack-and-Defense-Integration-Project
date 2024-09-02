@@ -32,14 +32,25 @@ def test(model, testloader, attack=None, trans=None):
         cnt=0
         for images, labels in testloader:
             cnt+=1
+            cd = images.to(device)
             print("iter=", cnt, '/', 782, end='\r')
             images, labels = images.to(device), labels.to(device)
             if attack:
                 images = attack(images, labels)
+
+            # 检测扰动是否在范围内
+            perturbation = images - cd
+            l_inf_norm = torch.max(perturbation.abs())
+            # print(l_inf_norm)
+            if l_inf_norm > 8/255+0.0001:
+                print(l_inf_norm, "扰动在范围外")
+            
             outputs = model(images)
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
+            # if cnt==50:
+            #     break
         print()
         accuracy = 100 * correct / total
     return accuracy
@@ -93,7 +104,7 @@ if __name__ == '__main__':
     ])
 
     testset = ImageFolder(root=os.path.join(data_dir, 'val'), transform=transform_test)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=64, shuffle=False, num_workers=2)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=64, shuffle=True, num_workers=2)
 
     # Model
     print('==> Building model..')
@@ -130,13 +141,13 @@ if __name__ == '__main__':
     attack = attack.QueryAttack(net, eps=8/255, num_iter=5000, num_x=10000)
 
     # 用 MI+PGD 攻击：
-    attack = attack.MI(net, eps=8/255, num_iter=4, steps=10, momentum=0.9)
+    # attack = attack.MI(net, eps=8/255, steps=10, momentum=0.9)
     
     # 用 DI+PGD 攻击：
-    # attack = attack.DI(net, eps=8/255, num_iter=4, steps=10, prob=0.5)
+    # attack = attack.DI(net, eps=8/255, steps=10, prob=0.5)
 
     # 用 TI+PGD 攻击：
-    attack = attack.TI(net, eps=8/255, num_iter=4, steps=10, kernlen=15, nsig=3)
+    attack = attack.TI(net, eps=8/255, steps=10, kernlen=5, nsig=5)
 
     # 用 AoA 攻击：
     # attack = attack.AoA(net, eps=8/255, alpha=2, num_iter=4, lamb=1000, yita=None)
@@ -146,8 +157,8 @@ if __name__ == '__main__':
     # print(f'Accuracy on clean test images: {clean_accuracy:.2f}%')
 
     # 测试模型在攻击后的测试集上的准确度
-    attack_accuracy = test(net, testloader, attack=attack)
-    # attack_accuracy = test(net, testloader, attack=attack, trans=trans_net)  # for tranferability
+    # attack_accuracy = test(net, testloader, attack=attack)
+    attack_accuracy = test(net, testloader, attack=attack, trans=trans_net)  # for tranferability
     print(f'Accuracy on attacked test images: {attack_accuracy:.2f}%')
 
 

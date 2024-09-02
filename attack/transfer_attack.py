@@ -9,8 +9,7 @@ from attack.gradcam.gradcam import *
 from attack.gradcam.gc_utils import *
 
 
-# MI (Non-targeted, linf) ##################################################################
-class MI(Attack):
+class MI():
     r"""
     MI Attack in the paper 'Boosting Adversarial Attacks with Momentum'
     Distance Measure : Linf
@@ -18,66 +17,56 @@ class MI(Attack):
     Arguments:
         model (nn.Module): model to attack.
         eps (float): maximum perturbation. (Default: 8/255)
-        num_iter (int): number of iterations in MI.  (Default: 4)
-        alpha (float): step size. (alpha = eps/num_iter, Default: 2/255)
+        alpha (float): step size. (alpha = eps*2/steps)
         steps (int): number of steps in PGD. (Default: 10)
         random_start (bool): using random initialization of delta. (Default: True)
     Examples:
-        >>> attack = attack.MI(net, eps=8/255, num_iter=4, steps=10, momentum=0.9)
+        >>> attack = attack.MI(net, eps=8/255 steps=10, momentum=0.9)
     """
-    def __init__(self, model, eps=8/255, num_iter=4, steps=10, momentum=0.9, random_start=True):
-        super().__init__("MI", model)
+    def __init__(self, model, eps=8/255, steps=10, momentum=0.9, random_start=True):
         self.eps = eps
         self.model = model
-        self.num_iter = num_iter
-        self.alpha = self.eps / self.num_iter
+        self.alpha = self.eps*2 / steps
         self.steps = steps
         self.momentum = momentum
         self.random_start = random_start
         self.num_classes = 1000
         self.device = "cuda:0"
 
-    def mi(self, images, labels, grad):     # based on PGD attack
+    def __call__(self, images, labels):
         images = images.clone().detach().to(self.device)
         labels = labels.clone().detach().to(self.device)
         loss = nn.CrossEntropyLoss()
-        adv_images = images.clone().detach()
 
         if self.random_start:
             # Starting at a uniformly random point
-            adv_images = adv_images + torch.empty_like(adv_images).uniform_(-self.eps, self.eps)
-            adv_images = torch.clamp(adv_images, min=0, max=1).detach()
+            delta_x = torch.empty_like(images).uniform_(-self.eps, self.eps)
+            delta_x.data = torch.clamp(images.data + delta_x.data, min=0., max=1.) - images.data
+        else:
+            delta_x = torch.zeros_like(images)
+        g_t = torch.zeros_like(delta_x)
+
+        delta_x.requires_grad = True
 
         for _ in range(self.steps):
-            adv_images.requires_grad = True
-            outputs = self.get_logits(adv_images)
-            # Calculate loss
+            outputs = self.model(images + delta_x)
             cost = loss(outputs, labels)
-            # Update adversarial images
-            noise0 = torch.autograd.grad(cost, adv_images, retain_graph=False, create_graph=False)[0]
-            noise = noise0.data
-            noise = noise / noise.abs().mean(dim=[1,2,3], keepdim=True)
-            noise = self.momentum * grad + noise  # 这里的noise0是上一轮的，这里的noise是本轮的grad
-            adv_images = adv_images.detach() + self.alpha * noise.sign()  # 与普通的区别实际上是noise的计算里包含了momentum (**MI核心步骤**)
-            adv_images.grad = None
-            adv_images.noise = None
-            delta = torch.clamp(adv_images - images, min=-self.eps, max=self.eps)
-            adv_images = torch.clamp(images + delta, min=0, max=1).detach()
-        
-        return adv_images, noise
+            grad = torch.autograd.grad(cost, delta_x, retain_graph=False, create_graph=False)[0]
 
-    def __call__(self, images, labels):
-        grad = torch.zeros([images.shape[0], images.shape[2], images.shape[3], 3]).to(self.device)
-        grad = grad.permute(0, 3, 1, 2)
-        for _ in range(0, self.num_iter):
-            # print("begin MI, iter=", _+1, '/', self.num_iter, end='\r')
-            images, grad = self.mi(images, labels, grad)
-        return images    # adv_images
+            normalized_grad = grad / grad.abs().mean(dim=[1,2,3], keepdim=True)
+            g_t = self.momentum * g_t + normalized_grad
+
+            delta_x.data = delta_x.data + g_t.sign() * self.alpha
+            delta_x.data = torch.clamp(delta_x.data, -self.eps, self.eps)
+            delta_x.data = torch.clamp(images.data + delta_x.data, min=0., max=1.) - images.data
+            delta_x.grad = None
+
+        return images + delta_x
 
 
 
 # DI (Non-targeted, linf) ##################################################################
-class DI(Attack):
+class DI():
     r"""
     DI Attack in the paper 'Improving Transferability of Adversarial Examples with Input Diversity'
     Distance Measure : Linf
@@ -86,7 +75,7 @@ class DI(Attack):
         model (nn.Module): model to attack.
         eps (float): maximum perturbation. (Default: 8/255)
         num_iter (int): number of iterations in DI. (Default:4)
-        alpha (float): step size. (alpha = eps/num_iter, Default: 2/255)
+        alpha (float): step size. (alpha = eps*2/steps, Default: 2/255)
         steps (int): number of steps in PGD. (Default: 10)
         prob (float): transformation probability. (Default:0.5)
         image_width (int): the lower bound of rnd. (Default:200)
@@ -95,12 +84,10 @@ class DI(Attack):
     Examples:
         >>> attack = attack.DI(net, eps=8/255, num_iter=4, steps=10, prob=0.5)
     """
-    def __init__(self, model, eps=8/255, num_iter=4, steps=10, prob=0.5, image_width=200, image_resize=224, random_start=True):
-        super().__init__("MI", model)
+    def __init__(self, model, eps=8/255, steps=10, prob=0.5, image_width=200, image_resize=224, random_start=True):
         self.eps = eps
         self.model = model
-        self.num_iter = num_iter
-        self.alpha = self.eps / self.num_iter
+        self.alpha = self.eps*2 / steps
         self.steps = steps
         self.prob = prob
         self.image_width = image_width
@@ -130,45 +117,37 @@ class DI(Attack):
         output = torch.where(apply_mask.to(self.device), padded.to(self.device), x)
         return output
 
-    def di(self, images, labels):
+    def __call__(self, images, labels):
         images = images.clone().detach().to(self.device)
         labels = labels.clone().detach().to(self.device)
         loss = nn.CrossEntropyLoss()
-        adv_images = images.clone().detach()
 
         if self.random_start:
             # Starting at a uniformly random point
-            adv_images = adv_images + torch.empty_like(adv_images).uniform_(-self.eps, self.eps)
-            adv_images = torch.clamp(adv_images, min=0, max=1).detach()
+            delta_x = torch.empty_like(images).uniform_(-self.eps, self.eps)
+            delta_x.data = torch.clamp(images.data + delta_x.data, min=0., max=1.) - images.data
+        else:
+            delta_x = torch.zeros_like(images)
+
+        delta_x.requires_grad = True
 
         for _ in range(self.steps):
-            adv_images.requires_grad = True
-            outputs = self.get_logits(self.input_diversity(adv_images))    # DI的关键步骤，**随机扰动**
-            # Calculate loss
+            outputs = self.model(self.input_diversity(images + delta_x))   ### DI
             cost = loss(outputs, labels)
-            # Update adversarial images
-            noise0 = torch.autograd.grad(cost, adv_images, retain_graph=False, create_graph=False)[0]
-            noise = noise0.data
-            noise = noise / noise.abs().mean(dim=[1,2,3], keepdim=True)
-            # noise = self.momentum * grad + noise   # 这里先不融合 MI
-            adv_images = adv_images.detach() + self.alpha * noise.sign()
-            adv_images.grad = None
-            adv_images.noise = None
-            delta = torch.clamp(adv_images - images, min=-self.eps, max=self.eps)
-            adv_images = torch.clamp(images + delta, min=0, max=1).detach()
-        
-        return adv_images
+            grad = torch.autograd.grad(cost, delta_x, retain_graph=False, create_graph=False)[0]
 
-    def __call__(self, images, labels):
-        for _ in range(0, self.num_iter):
-            # print("begin DI, iter=", _+1, '/', self.num_iter, end='\r')
-            images = self.di(images, labels)
-        return images    # adv_images
+            normalized_grad = grad / grad.abs().mean(dim=[1,2,3], keepdim=True)
 
+            delta_x.data = delta_x.data + normalized_grad.sign() * self.alpha
+            delta_x.data = torch.clamp(delta_x.data, -self.eps, self.eps)
+            delta_x.data = torch.clamp(images.data + delta_x.data, min=0., max=1.) - images.data
+            delta_x.grad = None
+
+        return images + delta_x
 
 
 # TI (Non-targeted, linf) ##################################################################
-class TI(Attack):
+class TI():
     r"""
     TI Attack in the paper 'Evading Defenses to Transferable Adversarial Examples by Translation-Invariant Attacks'
     Distance Measure : Linf
@@ -176,22 +155,19 @@ class TI(Attack):
     Arguments:
         model (nn.Module): model to attack.
         eps (float): maximum perturbation. (Default: 8/255)
-        num_iter (int): number of iterations in MI. (Default: 4)
-        alpha (float): step size. (alpha = eps/num_iter, Default: 2/255)
+        alpha (float): step size. (alpha = eps*2/steps)
         steps (int): number of steps in PGD. (Default: 10)
-        kernlen (int): size of the Gaussian kernel. (Default: 15)
-        nsig (int): range of the Gaussian distribution. (Default: 3)
+        kernlen (int): size of the Gaussian kernel. (Default: 5)
+        nsig (int): range of the Gaussian distribution. (Default: 5)
         random_start (bool): using random initialization of delta. (Default: True)
     Examples:
-        >>> attack = attack.TI(net, eps=8/255, num_iter=4, steps=10, kernlen=15, nsig=3)
+        >>> attack = attack.TI(net, eps=8/255, steps=10, kernlen=5, nsig=5)
     """
-    def __init__(self, model, eps=8/255, num_iter=4, steps=10, kernlen=15, nsig=3, random_start=True):
-        super().__init__("MI", model)
+    def __init__(self, model, eps=8/255, steps=10, kernlen=5, nsig=5, random_start=True):
         self.eps = eps
         self.model = model
-        self.num_iter = num_iter
-        self.alpha = self.eps / self.num_iter
         self.steps = steps
+        self.alpha = self.eps*2 / self.steps
         self.kernlen = kernlen
         self.random_start = random_start
         self.num_classes = 1000
@@ -211,49 +187,46 @@ class TI(Attack):
         kernel = kernel_raw / kernel_raw.sum()
         return kernel
 
-    def ti(self, images, labels):
+    def __call__(self, images, labels):
         images = images.clone().detach().to(self.device)
         labels = labels.clone().detach().to(self.device)
         loss = nn.CrossEntropyLoss()
-        adv_images = images.clone().detach()
 
         if self.random_start:
             # Starting at a uniformly random point
-            adv_images = adv_images + torch.empty_like(adv_images).uniform_(-self.eps, self.eps)
-            adv_images = torch.clamp(adv_images, min=0, max=1).detach()
+            delta_x = torch.empty_like(images).uniform_(-self.eps, self.eps)
+            delta_x.data = torch.clamp(images.data + delta_x.data, min=0., max=1.) - images.data
+        else:
+            delta_x = torch.zeros_like(images)
+
+        delta_x.requires_grad = True
 
         for _ in range(self.steps):
-            adv_images.requires_grad = True
-            # outputs = self.get_logits(self.input_diversity(adv_images))    # 这里先不融合DI
-            outputs = self.get_logits(adv_images)
+            outputs = self.model(images + delta_x)
             cost = loss(outputs, labels)
-            # Update adversarial images
-            noise0 = torch.autograd.grad(cost, adv_images, retain_graph=False, create_graph=False)[0]
-            noise = noise0.data
-            # 卷积 **TI关键步骤**
-            noise = F.conv2d(noise, self.stack_kernel.to(self.device), padding=self.kernlen//2, groups=noise.shape[1])
-            noise = noise / noise.abs().mean(dim=[1,2,3], keepdim=True)
-            # noise = self.momentum * grad + noise   # 这里先不融合 MI
-            
-            adv_images = adv_images.detach() + self.alpha * noise.sign()
-            adv_images.grad = None
-            adv_images.noise = None
-            delta = torch.clamp(adv_images - images, min=-self.eps, max=self.eps)
-            adv_images = torch.clamp(images + delta, min=0, max=1).detach()
-        
-        return adv_images
+            grad = torch.autograd.grad(cost, delta_x, retain_graph=False, create_graph=False)[0]
 
-    def __call__(self, images, labels):
-        for _ in range(0, self.num_iter):
-            # print("begin TI, iter=", _+1, '/', self.num_iter, end='\r')
-            images = self.ti(images, labels)
-        return images    # adv_images
+            # grad = F.conv2d(grad, self.stack_kernel.to(self.device), padding=self.kernlen//2, groups=grad.shape[1])  ### TI
+            # grad = F.conv2d(grad, self.stack_kernel.to(self.device), stride=1, padding=0, groups=grad.size(1))
 
+            # 计算填充
+            kernel_size = self.stack_kernel.size(2)  # 假设卷积核的高度和宽度相同
+            padding = (kernel_size - 1) // 2
+            grad = F.pad(grad, (padding, padding, padding, padding), mode='constant', value=0)
+            grad = F.conv2d(grad, self.stack_kernel.to(self.device), stride=1, groups=grad.size(1))
 
+            normalized_grad = grad / grad.abs().mean(dim=[1,2,3], keepdim=True)
+
+            delta_x.data = delta_x.data + normalized_grad.sign() * self.alpha
+            delta_x.data = torch.clamp(delta_x.data, -self.eps, self.eps)
+            delta_x.data = torch.clamp(images.data + delta_x.data, min=0., max=1.) - images.data
+            delta_x.grad = None
+
+        return images + delta_x
 
 
 # AoA ##################################################################
-class AoA(Attack):
+class AoA():
     r"""
     AoA (Attack on Attention) in the pape 'Universal Adversarial Attack on Attention and the Resulting Dataset DAmageNetr'
     Using grad-cam to calculate the attention map h(x,y)
@@ -324,15 +297,17 @@ class AoA(Attack):
         x_adv = x.to(self.device)
         x_adv.requires_grad = True
         N = c*h*w
-        k = 0
+        # k = 0
         for _ in range(self.num_iter):
             # while self.RMSE(x, x_adv) < self.yita:
             x_adv.grad = None
             aoa = AoAloss(x_adv)
             g = torch.autograd.grad(aoa, x_adv, retain_graph=False, create_graph=False)[0].detach()
             gg = g*N / torch.norm(g, p=1)
-            x_adv = torch.clamp(x_adv - self.alpha*gg, min=-self.eps, max=self.eps)
-            k += 1
+            delta = torch.clamp(x_adv - self.alpha*gg - x, min=-self.eps, max=self.eps)
+            # delta = torch.clamp(adv_images - images, min=-self.eps, max=self.eps)
+            x_adv = torch.clamp(x + delta, min=0, max=1)
+            # k += 1
             del aoa
             del g
             torch.cuda.empty_cache()

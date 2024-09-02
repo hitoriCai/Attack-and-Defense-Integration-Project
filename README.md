@@ -16,6 +16,12 @@
 
 4. 本攻击代码用于 ImageNet, 因此要修改正确的 ImageNet 路径 `data_dir = '/your_dir/ILSVRC2012'`
 
+5. 在攻击之前, 原图片在 `resnet50` 下的分类正确率为 Accuracy on clean test images: **76.15%**
+
+```python
+clean_accuracy = test(net, testloader)
+```
+
 
 
 ### 1.1 白盒攻击
@@ -237,7 +243,9 @@ paths = {
 
 参考 `attack/transfer_attack.py`, 以下迁移攻击均为 linf, non-targeted
 
-MI, DI, TI 的测试网络均为: 在 `resnet50` 上生成攻击图片, 在 `resnet101` 上测试迁移后攻击的正确率
+1. MI, DI, TI 的测试网络均为: 在 `resnet50` 上生成攻击图片, 在 `resnet101` 上测试迁移后攻击的正确率 :
+
+(AoA 测试网络把 `resnet50` 换成 `resnet18 `即可)
 
 ```python
 net = models.resnet50(pretrained=True)
@@ -246,7 +254,15 @@ net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], 
 trans_net = ProcessedModel(trans_net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])).to(device)
 ```
 
-AoA 测试网络把上面的 `resnet50` 换成 `resnet18 `即可
+2. 注意, 在测试时, 应当加入 `trans_net` :
+
+```python
+attack_accuracy = test(net, testloader, attack=attack, trans=trans_net)  # for tranferability
+```
+
+3. 如果不加 MI, DI, TI 攻击, 直接测试 PGD-linf 的迁移成功率, 我们可以得到分类正确率为 **36.57%**
+
+
 
 #### 1.3.1 MI, DI, TI 攻击
 
@@ -258,18 +274,17 @@ AoA 测试网络把上面的 `resnet50` 换成 `resnet18 `即可
 
 - `net`: 攻击网络, 默认为 `resnet50`
 - `eps`: 攻击强度, 默认为 8/255
-- `num_iter`: MI攻击中的迭代次数, 默认为4
-- `alpha`: 步长(一般alpha = eps/num_iter),  默认为 2/255
-- `steps`: PGD中的循环次数, 默认为10
+- `alpha`: 步长(一般 `alpha = eps*2/steps`)
+- `steps`: 循环次数, 默认为10
 - `random_start`: 是否使用delta的随机初始化, 默认为True
 
 测试方法:
 
 ```python
-attack = attack.MI(net, eps=8/255, num_iter=4, steps=10, momentum=0.9)
+attack = attack.MI(net, eps=8/255, steps=10, momentum=0.9)
 ```
 
-攻击后图片分类正确率: Accuracy on attacked test images: **0.00%**
+攻击后图片分类正确率: Accuracy on attacked test images:  **23.08%** 
 
 
 
@@ -280,9 +295,8 @@ attack = attack.MI(net, eps=8/255, num_iter=4, steps=10, momentum=0.9)
 - `net`: 攻击网络, 默认为 `resnet50`
 - `eps`: 攻击强度, 默认为 8/255
 
-- `num_iter`: MI攻击中的迭代次数, 默认为4
-- `alpha`: 步长(一般 `alpha = eps/num_iter`),  默认为 2/255
-- `steps`: PGD中的循环次数, 默认为10
+- `alpha`: 步长(一般 `alpha = eps*2/steps`)
+- `steps`: 循环次数, 默认为10
 
 - `prob`: 变换概率, 默认值为 0.5
 - `image_width`: 随机数的下界, 默认为 200
@@ -293,10 +307,10 @@ attack = attack.MI(net, eps=8/255, num_iter=4, steps=10, momentum=0.9)
 测试方法:
 
 ```python
-attack = attack.DI(net, eps=8/255, num_iter=4, steps=10, prob=0.5)
+attack = attack.DI(net, eps=8/255, steps=10, prob=0.5)
 ```
 
-攻击后图片分类正确率: Accuracy on attacked test images: **0.00%**
+攻击后图片分类正确率: Accuracy on attacked test images:  **24.99%**
 
 
 
@@ -307,22 +321,21 @@ attack = attack.DI(net, eps=8/255, num_iter=4, steps=10, prob=0.5)
 - `net`: 攻击网络, 默认为 `resnet50`
 - `eps`: 攻击强度, 默认为 8/255
 
-- `num_iter`: MI攻击中的迭代次数, 默认为4
-- `alpha`: 步长 (一般 `alpha = eps/num_iter`),  默认为 2/255
+- `alpha`: 步长 (一般 `alpha = eps*2/steps`)
 - `steps`: PGD中的循环次数, 默认为10
 
-- `kernlen`: 高斯核的大小, 默认为 15
-- `nsig`: 高斯分布的范围, 默认为 3
+- `kernlen`: 高斯核的大小, 默认为 5
+- `nsig`: 高斯分布的范围, 默认为 5
 
-- `random_start`: 是否使用delta的随机初始化, 默认为True
+- `random_start`: 是否使用delta的随机初始化, 默认为 True
 
 测试方法:
 
 ```python
-attack = attack.TI(net, eps=8/255, num_iter=4, steps=10, kernlen=15, nsig=3)
+attack = attack.TI(net, eps=8/255, steps=10, kernlen=15, nsig=3)
 ```
 
-攻击后图片分类正确率: Accuracy on attacked test images: **0.00%**
+攻击后图片分类正确率: Accuracy on attacked test images: **29.81%**
 
 
 
@@ -339,7 +352,7 @@ attack = attack.TI(net, eps=8/255, num_iter=4, steps=10, kernlen=15, nsig=3)
 - `eps`: 攻击强度, 默认为 8/255
 
 - `model_dict`: 包含 'type', 'arch', 'layer_name', 'input_size' 作为键的字典。
-- `type: 'vgg', 'resnet', 'densenet', 'alexnet', 'squeezenet' 等模型类型, 默认为 'resnet'
+- `type`: 'vgg', 'resnet', 'densenet', 'alexnet', 'squeezenet' 等模型类型, 默认为 'resnet'
 - `lamb`: $\lambda$, 注意力攻击和交叉熵之间的关系, 默认为1000
 - `yita`: 均方根误差的界限, 默认为None (此时循环次数取决于 `num_iter`)
 - `alpha`: 步长 (一般 `alpha = eps/num_iter`),  默认为 2/255
@@ -353,7 +366,7 @@ attack = attack.TI(net, eps=8/255, num_iter=4, steps=10, kernlen=15, nsig=3)
 attack = attack.AoA(net, eps=8/255, alpha=2, num_iter=4, lamb=1000, yita=None)
 ```
 
-攻击后图片分类正确率: Accuracy on attacked test images: **0.00%**
+攻击后图片分类正确率: Accuracy on attacked test images:  75.75%（x）
 
 
 
