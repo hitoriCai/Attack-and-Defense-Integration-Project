@@ -117,7 +117,7 @@ if __name__ == '__main__':
     # attack = attack.FGSM(net, eps=8 / 255)
 
     # PGD:
-    # attack = attack.PGD(net, eps=8 / 255, alpha=1 / 255, steps=10, random_start=True)  # Linf
+    attack = attack.PGD(net, eps=8 / 255, alpha=1 / 255, steps=10, random_start=True)  # Linf
 
     # autoPGD-ce/dlr:
     # attack = attack.APGD(net, eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
@@ -127,10 +127,10 @@ if __name__ == '__main__':
     # attack = attack.Square(net, eps=8 / 255, n_queries=100, n_restarts=1, p_init=.8, seed=0, verbose=False, loss='margin', resc_schedule=True)
 
     # QueryAttack:
-    # attack = attack.QueryAttack(net, eps=8/255, num_iter=5000, num_x=10000)
+    attack = attack.QueryAttack(net, eps=8/255, num_iter=5000, num_x=10000)
 
     # 用 MI+PGD 攻击：
-    # attack = attack.MI(net, eps=8/255, num_iter=4, steps=10, momentum=0.9)
+    attack = attack.MI(net, eps=8/255, num_iter=4, steps=10, momentum=0.9)
     
     # 用 DI+PGD 攻击：
     # attack = attack.DI(net, eps=8/255, num_iter=4, steps=10, prob=0.5)
