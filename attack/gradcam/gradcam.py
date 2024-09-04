@@ -1,5 +1,3 @@
-# from 'https://github.com/1Konny/gradcam_plus_plus-pytorch'
-
 import torch
 import torch.nn.functional as F
 
@@ -36,7 +34,7 @@ class GradCAM(object):
         model_type = model_dict['type']
         layer_name = model_dict['layer_name']
         self.model_arch = model_dict['arch']
-
+        self.model_arch.eval()
         self.gradients = dict()
         self.activations = dict()
         def backward_hook(module, grad_input, grad_output):
@@ -58,7 +56,7 @@ class GradCAM(object):
             target_layer = find_squeezenet_layer(self.model_arch, layer_name)
 
         target_layer.register_forward_hook(forward_hook)
-        target_layer.register_backward_hook(backward_hook)
+        # target_layer.register_backward_hook(backward_hook)
 
         if verbose:
             try:
@@ -82,20 +80,21 @@ class GradCAM(object):
             mask: saliency map of the same spatial dimension with input
             logit: model output
         """
-        c, h, w = input.size()
+        b, c, h, w = input.size()
 
         logit = self.model_arch(input)
         if class_idx is None:
             score = logit[:, logit.max(1)[-1]].squeeze()
         else:
             score = logit[:, class_idx].squeeze()
+        
 
         self.model_arch.zero_grad()
-        input.requires_grad_()
-        # score.backward(torch.ones_like(score), retain_graph=True, create_graph=True)
-        grad = torch.autograd.grad(score, input, retain_graph=True, create_graph=True)[0]
-        gradients = self.gradients['value']
         activations = self.activations['value']
+        gradients = torch.autograd.grad(score, activations, create_graph=True, retain_graph=True)[0]
+        # score.backward(create_graph=True)
+        # gradients = self.gradients['value']
+        
         b, k, u, v = gradients.size()
 
         alpha = gradients.view(b, k, -1).mean(2)
@@ -106,7 +105,7 @@ class GradCAM(object):
         saliency_map = F.relu(saliency_map)
         saliency_map = F.upsample(saliency_map, size=(h, w), mode='bilinear', align_corners=False)
         saliency_map_min, saliency_map_max = saliency_map.min(), saliency_map.max()
-        saliency_map = (saliency_map - saliency_map_min).div(saliency_map_max - saliency_map_min).data
+        saliency_map = (saliency_map - saliency_map_min).div(saliency_map_max - saliency_map_min)
 
         return saliency_map, logit
 

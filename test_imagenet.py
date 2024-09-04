@@ -104,7 +104,8 @@ if __name__ == '__main__':
     ])
 
     testset = ImageFolder(root=os.path.join(data_dir, 'val'), transform=transform_test)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=64, shuffle=True, num_workers=2)
+    subdataset, _ = torch.utils.data.random_split(testset, [1000, len(testset)-1000], generator=torch.Generator().manual_seed(0))
+    testloader = torch.utils.data.DataLoader(subdataset, batch_size=32, shuffle=True, num_workers=10)
 
     # Model
     print('==> Building model..')
@@ -128,7 +129,7 @@ if __name__ == '__main__':
     # attack = attack.FGSM(net, eps=8 / 255)
 
     # PGD:
-    attack = attack.PGD(net, eps=8 / 255, alpha=1 / 255, steps=10, random_start=True)  # Linf
+    # attack_pgd = attack.PGD(net, eps=8 / 255, alpha=1 / 255, steps=10, random_start=True)  # Linf
 
     # autoPGD-ce/dlr:
     # attack = attack.APGD(net, eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
@@ -138,7 +139,7 @@ if __name__ == '__main__':
     # attack = attack.Square(net, eps=8 / 255, n_queries=100, n_restarts=1, p_init=.8, seed=0, verbose=False, loss='margin', resc_schedule=True)
 
     # QueryAttack:
-    attack = attack.QueryAttack(net, eps=8/255, num_iter=5000, num_x=10000)
+    # attack = attack.QueryAttack(net, eps=8/255, num_iter=5000, num_x=10000)
 
     # 用 MI+PGD 攻击：
     # attack = attack.MI(net, eps=8/255, steps=10, momentum=0.9)
@@ -147,10 +148,10 @@ if __name__ == '__main__':
     # attack = attack.DI(net, eps=8/255, steps=10, prob=0.5)
 
     # 用 TI+PGD 攻击：
-    attack = attack.TI(net, eps=8/255, steps=10, kernlen=5, nsig=5)
+    # attack = attack.TI(net, eps=8/255, steps=10, kernlen=5, nsig=5)
 
     # 用 AoA 攻击：
-    # attack = attack.AoA(net, eps=8/255, alpha=2, num_iter=4, lamb=1000, yita=None)
+    attack_aoa = attack.AoA(net, eps=8/255, alpha=2, num_iter=10, lamb=1000, yita=None)
 
     # 测试原始模型在干净测试集上的准确度
     # clean_accuracy = test(net, testloader)
@@ -158,7 +159,7 @@ if __name__ == '__main__':
 
     # 测试模型在攻击后的测试集上的准确度
     # attack_accuracy = test(net, testloader, attack=attack)
-    attack_accuracy = test(net, testloader, attack=attack, trans=trans_net)  # for tranferability
+    attack_accuracy = test(net, testloader, attack=attack_aoa, trans=trans_net)  # for tranferability
     print(f'Accuracy on attacked test images: {attack_accuracy:.2f}%')
 
 
