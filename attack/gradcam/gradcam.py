@@ -37,9 +37,6 @@ class GradCAM(object):
         self.model_arch.eval()
         self.gradients = dict()
         self.activations = dict()
-        def backward_hook(module, grad_input, grad_output):
-            self.gradients['value'] = grad_output[0]
-            return None
         def forward_hook(module, input, output):
             self.activations['value'] = output
             return None
@@ -56,7 +53,6 @@ class GradCAM(object):
             target_layer = find_squeezenet_layer(self.model_arch, layer_name)
 
         target_layer.register_forward_hook(forward_hook)
-        # target_layer.register_backward_hook(backward_hook)
 
         if verbose:
             try:
@@ -70,12 +66,11 @@ class GradCAM(object):
                 print('saliency_map size :', self.activations['value'].shape[2:])
 
 
-    def forward(self, input, class_idx=None, retain_graph=False):
+    def forward(self, input, class_idx=None):
         """
         Args:
-            input: input image with shape of (1, 3, H, W)
-            class_idx (int): class index for calculating GradCAM.
-                    If not specified, the class index that makes the highest model prediction score will be used.
+            input: input image with shape of (B, 3, H, W)
+            class_idx (tensor): class index for calculating GradCAM, with shape of (B,)
         Return:
             mask: saliency map of the same spatial dimension with input
             logit: model output
@@ -83,17 +78,12 @@ class GradCAM(object):
         b, c, h, w = input.size()
 
         logit = self.model_arch(input)
-        if class_idx is None:
-            score = logit[:, logit.max(1)[-1]].squeeze()
-        else:
-            score = logit[:, class_idx].squeeze()
-        
+        score = logit.gather(1, class_idx.unsqueeze(1))
+        score = score.sum()
 
         self.model_arch.zero_grad()
         activations = self.activations['value']
         gradients = torch.autograd.grad(score, activations, create_graph=True, retain_graph=True)[0]
-        # score.backward(create_graph=True)
-        # gradients = self.gradients['value']
         
         b, k, u, v = gradients.size()
 
@@ -103,82 +93,12 @@ class GradCAM(object):
 
         saliency_map = (weights*activations).sum(1, keepdim=True)
         saliency_map = F.relu(saliency_map)
-        saliency_map = F.upsample(saliency_map, size=(h, w), mode='bilinear', align_corners=False)
-        saliency_map_min, saliency_map_max = saliency_map.min(), saliency_map.max()
-        saliency_map = (saliency_map - saliency_map_min).div(saliency_map_max - saliency_map_min)
+        saliency_map = F.interpolate(saliency_map, size=(h, w), mode='bilinear', align_corners=False)
+        saliency_map_min = torch.min(saliency_map.view(b,-1), dim=1, keepdim=True)[0].view(b,1,1,1).detach()
+        saliency_map_max = torch.max(saliency_map.view(b,-1), dim=1, keepdim=True)[0].view(b,1,1,1).detach()
+        saliency_map = (saliency_map - saliency_map_min).div(saliency_map_max - saliency_map_min + 1e-8)
 
         return saliency_map, logit
 
-    def __call__(self, input, class_idx=None, retain_graph=False):
-        return self.forward(input, class_idx, retain_graph)
-
-
-class GradCAMpp(GradCAM):
-    """Calculate GradCAM++ salinecy map.
-
-    A simple example:
-
-        # initialize a model, model_dict and gradcampp
-        resnet = torchvision.models.resnet101(pretrained=True)
-        resnet.eval()
-        model_dict = dict(model_type='resnet', arch=resnet, layer_name='layer4', input_size=(224, 224))
-        gradcampp = GradCAMpp(model_dict)
-
-        # get an image and normalize with mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)
-        img = load_img()
-        normed_img = normalizer(img)
-
-        # get a GradCAM saliency map on the class index 10.
-        mask, logit = gradcampp(normed_img, class_idx=10)
-
-        # make heatmap from mask and synthesize saliency map using heatmap and img
-        heatmap, cam_result = visualize_cam(mask, img)
-
-
-    Args:
-        model_dict (dict): a dictionary that contains 'model_type', 'arch', layer_name', 'input_size'(optional) as keys.
-        verbose (bool): whether to print output size of the saliency map givien 'layer_name' and 'input_size' in model_dict.
-    """
-    def __init__(self, model_dict, verbose=False):
-        super(GradCAMpp, self).__init__(model_dict, verbose)
-
-    def forward(self, input, class_idx=None, retain_graph=False):
-        """
-        Args:
-            input: input image with shape of (1, 3, H, W)
-            class_idx (int): class index for calculating GradCAM.
-                    If not specified, the class index that makes the highest model prediction score will be used.
-        Return:
-            mask: saliency map of the same spatial dimension with input
-            logit: model output
-        """
-        b, c, h, w = input.size()
-
-        logit = self.model_arch(input)
-        if class_idx is None:
-            score = logit[:, logit.max(1)[-1]].squeeze()
-        else:
-            score = logit[:, class_idx].squeeze() 
-            
-        self.model_arch.zero_grad()
-        score.backward(retain_graph=retain_graph)
-        gradients = self.gradients['value'] # dS/dA
-        activations = self.activations['value'] # A
-        b, k, u, v = gradients.size()
-
-        alpha_num = gradients.pow(2)
-        alpha_denom = gradients.pow(2).mul(2) + \
-                activations.mul(gradients.pow(3)).view(b, k, u*v).sum(-1, keepdim=True).view(b, k, 1, 1)
-        alpha_denom = torch.where(alpha_denom != 0.0, alpha_denom, torch.ones_like(alpha_denom))
-
-        alpha = alpha_num.div(alpha_denom+1e-7)
-        positive_gradients = F.relu(score.exp()*gradients) # ReLU(dY/dA) == ReLU(exp(S)*dS/dA))
-        weights = (alpha*positive_gradients).view(b, k, u*v).sum(-1).view(b, k, 1, 1)
-
-        saliency_map = (weights*activations).sum(1, keepdim=True)
-        saliency_map = F.relu(saliency_map)
-        saliency_map = F.upsample(saliency_map, size=(224, 224), mode='bilinear', align_corners=False)
-        saliency_map_min, saliency_map_max = saliency_map.min(), saliency_map.max()
-        saliency_map = (saliency_map-saliency_map_min).div(saliency_map_max-saliency_map_min).data
-
-        return saliency_map, logit
+    def __call__(self, input, class_idx=None):
+        return self.forward(input, class_idx)

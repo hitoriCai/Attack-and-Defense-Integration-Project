@@ -129,7 +129,7 @@ if __name__ == '__main__':
     # attack = attack.FGSM(net, eps=8 / 255)
 
     # PGD:
-    # attack_pgd = attack.PGD(net, eps=8 / 255, alpha=1 / 255, steps=10, random_start=True)  # Linf
+    attack_pgd = attack.PGD(net, eps=8 / 255, alpha=1 / 255, steps=10, random_start=True)  # Linf
 
     # autoPGD-ce/dlr:
     # attack = attack.APGD(net, eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
@@ -151,7 +151,7 @@ if __name__ == '__main__':
     # attack = attack.TI(net, eps=8/255, steps=10, kernlen=5, nsig=5)
 
     # 用 AoA 攻击：
-    attack_aoa = attack.AoA(net, eps=8/255, alpha=2, num_iter=10, lamb=1000, yita=None)
+    attack_aoa = attack.AoA(net, eps=8/255, alpha=1.6/255, steps=10, lamb=10, layer_name="layer4")
 
     # 测试原始模型在干净测试集上的准确度
     # clean_accuracy = test(net, testloader)

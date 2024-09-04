@@ -240,54 +240,52 @@ class AoA():
         alpha (float): step size. (alpha = eps/num_iter, Default: 2/255)
         num_iter (int): number of iterations. (Default: 4)
     Examples:
-        >>> attack = attack.AoA(net, eps=8/255, alpha=2, num_iter=4, lamb=1000, yita=None)
+        >>> attack = attack.AoA(net, eps=8/255, alpha=2, num_iter=4, lamb=1000)
     """
-    def __init__(self, model, eps=8/255, alpha=2, num_iter=4, lamb=1000, yita=None):
+    def __init__(self, model, eps=8/255, alpha=2/255, steps=4, lamb=1000, layer_name="layer4"):
         self.eps = eps
         self.model = model
-        self.lamb = lamb
-        self.yita = yita
+        self.lamb = max(lamb, 1e-4)
         self.alpha = alpha
-        self.num_iter = num_iter
+        self.steps = steps
         self.num_classes = 1000
         self.device = "cuda:0"
+        self.layer_name=layer_name
 
-    def RMSE(self, x1, x2, N):
-        a = np.linalg.norm(x1 - x2) ** 2
-        b = np.sqrt(a / N)
-        return b
-
-    
     def __call__(self, x, y):
-        torch.autograd.set_detect_anomaly(True)
+        """
+        support batch calculation
+        x shape: [B,C,H,W]
+        y shape: [B]
+        layer_name: 是最后一个卷积层输出的特征层. (Default: 'layer4', for resnet50)
+        """
         os.environ["CUDA_VISIBLE_DEVICES"] = self.device
-        c, h, w = x.shape[1:]
-        # layer_name: 是最后一个卷积层输出的特征层. (Default: 'layer4_basicblock1_conv2', for resnet18)
-        model_dict = dict(type='resnet', arch=self.model, layer_name='layer4', input_size=(1, 3, 224, 224))
+        model_dict = dict(type='resnet', arch=self.model, layer_name=self.layer_name, input_size=(1, 3, 224, 224))
         gradcam = GradCAM(model_dict)
 
         with torch.no_grad():
             logits = self.model(x).detach()
         values, indices = torch.topk(logits, 2, dim=1)
-        del logits
-        y_ori = indices[:, 0]  # 选择第一个类别，形状为 [batch_size, height, width]
+        y_ori = indices[:, 0]  
         y_sec = indices[:, 1] 
 
-        def AoAloss_per_image(x:torch.tensor, y_ori:int, y_sec:int, target:int):
+        def AoAloss_batch(x:torch.tensor, y_ori:torch.tensor, y_sec:torch.tensor, target:torch.tensor):
             '''
             x shape: [1, 3, W, H]
             '''
-            assert x.requires_grad , "X shoule need gradient"
+            assert x.requires_grad , "X should need gradient"
             h_ori, logit_ori = gradcam(x, y_ori)
             h_sec, logit_sec = gradcam(x, y_sec)
             
-            L_log = torch.log(torch.norm(h_ori, p=1)) - torch.log(torch.norm(h_sec, p=1))
-            target = torch.tensor((target,), dtype=torch.long).to(self.device)
+            L_log = torch.log(torch.norm(h_ori, p=1, dim=(1,2,3)) + 1e-8) - \
+                torch.log(torch.norm(h_sec, p=1, dim=(1,2,3))+ 1e-8)
+            L_log = L_log.mean()
             
             # logit_ori and logit_sec shoule be the same
             L_ce = nn.CrossEntropyLoss()(logit_ori, target) * 0.5 + nn.CrossEntropyLoss()(logit_sec, target) * 0.5
             if torch.isnan(L_log).any():
-                L_AoA = -L_ce
+                print("Loss has Nan, just using CE loss")
+                L_AoA = -self.lamb * L_ce
             else:
                 L_AoA = L_log - self.lamb * L_ce
             grad = torch.autograd.grad(L_AoA, x)[0].detach()
@@ -295,25 +293,20 @@ class AoA():
             gradcam.activations = dict()
             self.model.zero_grad()
             torch.cuda.empty_cache() 
-            return grad
-        
-        
+            return -grad
             
         delta_x = torch.zeros_like(x).to(self.device).uniform_(-self.eps, self.eps)
-
-        # k = 0
-        for _ in range(self.num_iter):
-            grad_batch = torch.zeros_like(delta_x).to(self.device)
-            for idx in range(x.shape[0]):
-                x_this_idx = (x[idx:idx+1] + delta_x[idx:idx+1]).detach().clone()
-                x_this_idx.requires_grad = True
-                grad = AoAloss_per_image(x_this_idx, y_ori[idx].item(), y_sec[idx].item(), y[idx].item())
-                grad_batch[idx:idx+1] = grad.detach()
-            delta_x.data = delta_x.data - self.eps * 2 / self.num_iter * grad_batch.sign().detach()
+        delta_x.requires_grad = True
+        
+        for _ in range(self.steps):
+            grad = AoAloss_batch((x+delta_x), y_ori, y_sec, y)
+            delta_x.data = delta_x.data + self.alpha * grad.sign().detach()
             delta_x.data = torch.clamp(delta_x.data, -self.eps, self.eps)
             delta_x.data = torch.clamp(delta_x.data + x.data, 0, 1) - x.data
+            delta_x.grad = None
         return (x+delta_x).detach()
             
 
 
 
+ 
