@@ -104,17 +104,18 @@ if __name__ == '__main__':
     ])
 
     testset = ImageFolder(root=os.path.join(data_dir, 'val'), transform=transform_test)
-    subdataset, _ = torch.utils.data.random_split(testset, [1000, len(testset)-1000], generator=torch.Generator().manual_seed(0))
-    testloader = torch.utils.data.DataLoader(subdataset, batch_size=32, shuffle=True, num_workers=10)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=64, shuffle=False, num_workers=10)
 
     # Model
     print('==> Building model..')
-    # net = models.resnet18(pretrained=True)
-    net = models.resnet50(pretrained=True)
-    # net = models.resnet101(pretrained=True)
-    trans_net = models.resnet101(pretrained=True)   # for transferability
+    # net = models.resnet50(pretrained=True)
+    net = models.resnet101(pretrained=True)
     net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])).to(device)
-    trans_net = ProcessedModel(trans_net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])).to(device)
+    net.eval()
+    # for transferability
+    # trans_net = models.resnet101(pretrained=True)   
+    # trans_net = ProcessedModel(trans_net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])).to(device)
+    # trans_net.eval()
 
     if args.resume:
         # Load checkpoint.
@@ -126,31 +127,31 @@ if __name__ == '__main__':
         start_epoch = checkpoint['epoch']
 
     # FGSM:
-    # attack = attack.FGSM(net, eps=8 / 255)
+    attack_fgsm = attack.FGSM(net, eps=8 / 255)
 
     # PGD:
     attack_pgd = attack.PGD(net, eps=8 / 255, alpha=1 / 255, steps=10, random_start=True)  # Linf
 
     # autoPGD-ce/dlr:
-    # attack = attack.APGD(net, eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
-    # attack = attack.APGD(net, eps=8/255, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False)
+    attack_apgd = attack.APGD(net, eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
+    # attack_apgd = attack.APGD(net, eps=8/255, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False)
 
     # SquareAttack:
-    # attack = attack.Square(net, eps=8 / 255, n_queries=100, n_restarts=1, p_init=.8, seed=0, verbose=False, loss='margin', resc_schedule=True)
+    attack_square = attack.Square(net, eps=8 / 255, n_queries=100, n_restarts=1, p_init=.8, seed=0, verbose=False, loss='margin', resc_schedule=True)
 
     # QueryAttack:
-    # attack = attack.QueryAttack(net, eps=8/255, num_iter=5000, num_x=10000)
+    attack_query = attack.QueryAttack(net, eps=8/255, num_iter=5000, num_x=10000)
 
-    # 用 MI+PGD 攻击：
-    # attack = attack.MI(net, eps=8/255, steps=10, momentum=0.9)
+    # MI + PGD:
+    attack_mi = attack.MI(net, eps=8/255, steps=10, momentum=0.9)
     
-    # 用 DI+PGD 攻击：
-    # attack = attack.DI(net, eps=8/255, steps=10, prob=0.5)
+    # DI + PGD:
+    attack_di = attack.DI(net, eps=8/255, steps=10, prob=0.5)
 
-    # 用 TI+PGD 攻击：
-    # attack = attack.TI(net, eps=8/255, steps=10, kernlen=5, nsig=5)
+    # TI + PGD:
+    attack_ti = attack.TI(net, eps=8/255, steps=10, kernlen=5, nsig=5)
 
-    # 用 AoA 攻击：
+    # AoA + PGD:
     attack_aoa = attack.AoA(net, eps=8/255, alpha=1.6/255, steps=10, lamb=10, layer_name="layer4")
 
     # 测试原始模型在干净测试集上的准确度
@@ -158,8 +159,8 @@ if __name__ == '__main__':
     # print(f'Accuracy on clean test images: {clean_accuracy:.2f}%')
 
     # 测试模型在攻击后的测试集上的准确度
-    # attack_accuracy = test(net, testloader, attack=attack)
-    attack_accuracy = test(net, testloader, attack=attack_aoa, trans=trans_net)  # for tranferability
+    attack_accuracy = test(net, testloader, attack=attack_square)
+    # attack_accuracy = test(net, testloader, attack=attack_aoa, trans=trans_net)  # for tranferability
     print(f'Accuracy on attacked test images: {attack_accuracy:.2f}%')
 
 

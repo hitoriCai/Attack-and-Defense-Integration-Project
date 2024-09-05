@@ -18,8 +18,8 @@ class FGSM(Attack):
         - labels: :math:`(N)` where each value :math:`y_i` is :math:`0 \leq y_i \leq` `number of labels`.
         - output: :math:`(N, C, H, W)`.
     Examples::
-        >>> attack = attack.FGSM(model, eps=8/255)
-        >>> adv_images = attack(images, labels)
+        >>> attack_fgsm = attack.FGSM(model, eps=8/255)
+        >>> adv_images = attack_fgsm(images, labels)
     """
     def __init__(self, model, eps=8 / 255):
         super().__init__("FGSM", model)
@@ -67,8 +67,8 @@ class PGD(Attack):
         - labels: :math:`(N)` where each value :math:`y_i` is :math:`0 \leq y_i \leq` `number of labels`.
         - output: :math:`(N, C, H, W)`.
     Examples::
-        >>> attack = torchattacks.PGD(model, eps=8/255, alpha=1/255, steps=10, random_start=True)
-        >>> adv_images = attack(images, labels)
+        >>> attack_pgd = torchattacks.PGD(model, eps=8/255, alpha=1/255, steps=10, random_start=True)
+        >>> adv_images = attack_pgd(images, labels)
     """
     def __init__(self, model, eps=8 / 255, alpha=2 / 255, steps=10, random_start=True):
         super().__init__("PGD", model)
@@ -137,8 +137,8 @@ class APGD(Attack):
         - labels: :math:`(N)` where each value :math:`y_i` is :math:`0 \leq y_i \leq` `number of labels`.
         - output: :math:`(N, C, H, W)`.
     Examples::
-        >>> attack = attack.APGD(model, eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
-        >>> adv_images = attack(images, labels)
+        >>> attack_apgd = attack.APGD(model, eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
+        >>> adv_images = attack_apgd(images, labels)
 
     """
 

@@ -22,6 +22,15 @@
 clean_accuracy = test(net, testloader)
 ```
 
+6. 关于 `testloader`, 测试全数据集时 `shuffle=False`
+
+```python
+testset = ImageFolder(root=os.path.join(data_dir, 'val'), transform=transform_test)
+testloader = torch.utils.data.DataLoader(testset, batch_size=64, shuffle=False, num_workers=10)
+```
+
+7. 采用评估模式 `net.eval()`, `trans_net.eval()`
+
 
 
 ### 1.1 白盒攻击
@@ -46,7 +55,7 @@ net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], 
 测试方法:
 
 ```python
-attack = attack.FGSM(net, eps=8 / 255)
+attack_fgsm = attack.FGSM(net, eps=8 / 255)
 ```
 
 攻击后图片分类正确率: Accuracy on attacked test images: **7.90%**
@@ -66,7 +75,7 @@ attack = attack.FGSM(net, eps=8 / 255)
 
 测试方法:
 ``` python
-attack = attack.PGD(net, eps=8 / 255, alpha=1 / 255, steps=10, random_start=True)  # Linf
+attack_pgd = attack.PGD(net, eps=8 / 255, alpha=1 / 255, steps=10, random_start=True)  # Linf
 ```
 
 攻击后图片分类正确率: Accuracy on attacked test images: **0.02%**
@@ -91,7 +100,7 @@ attack = attack.PGD(net, eps=8 / 255, alpha=1 / 255, steps=10, random_start=True
 APGD-ce 测试方法:
 
 ```python
-attack = attack.APGD(net, eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
+attack_apgd = attack.APGD(net, eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', eot_iter=1, rho=.75, verbose=False)
 ```
 
 攻击后图片分类正确率: Accuracy on attacked test images: **0.09%**
@@ -99,7 +108,7 @@ attack = attack.APGD(net, eps=8/255, steps=10, n_restarts=1, seed=0, loss='ce', 
 APGD-dlr 测试方法:
 
 ```python
-attack = attack.APGD(net, eps=8/255, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False)
+attack_apgd = attack.APGD(net, eps=8/255, steps=10, n_restarts=1, seed=0, loss='dlr', eot_iter=1, rho=.75, verbose=False)
 ```
 
 攻击后图片分类正确率: Accuracy on attacked test images: **0.00%**
@@ -139,10 +148,10 @@ net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], 
 测试方法:
 
 ```python
-attack = attack.Square(net, eps=8 / 255, n_queries=100, n_restarts=1, p_init=.8, seed=0, verbose=False, loss='margin', resc_schedule=True)
+attack_square = attack.Square(net, eps=8 / 255, n_queries=100, n_restarts=1, p_init=.8, seed=0, verbose=False, loss='margin', resc_schedule=True)
 ```
 
-攻击后图片分类正确率: Accuracy on attacked test images: **30.86%**
+攻击后图片分类正确率: Accuracy on attacked test images: **32.21%**
 
 
 
@@ -178,7 +187,7 @@ net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], 
 测试方法:
 
 ```python
-attack = attack.QueryAttack(net, eps=8/255, num_iter=5000, num_x=10000)
+attack_query = attack.QueryAttack(net, eps=8/255, num_iter=5000, num_x=10000)
 ```
 
 输出:
@@ -243,9 +252,7 @@ paths = {
 
 参考 `attack/transfer_attack.py`, 以下迁移攻击均为 linf, non-targeted
 
-1. MI, DI, TI 的测试网络均为: 在 `resnet50` 上生成攻击图片, 在 `resnet101` 上测试迁移后攻击的正确率 :
-
-(AoA 测试网络把 `resnet50` 换成 `resnet18 `即可)
+1. 测试网络均为: 在 `resnet50` 上生成攻击图片, 在 `resnet101` 上测试迁移后攻击的正确率 :
 
 ```python
 net = models.resnet50(pretrained=True)
@@ -260,7 +267,7 @@ trans_net = ProcessedModel(trans_net, NormalizeByChannelMeanStd(mean=[0.485, 0.4
 attack_accuracy = test(net, testloader, attack=attack, trans=trans_net)  # for tranferability
 ```
 
-3. 如果不加 MI, DI, TI 攻击, 直接测试 PGD-linf 的迁移成功率, 我们可以得到分类正确率为 **36.57%**
+3. 如果不加迁移攻击, 直接测试 PGD-linf 的迁移成功率, 我们可以得到分类正确率为 **36.76%**
 
 
 
@@ -281,10 +288,10 @@ attack_accuracy = test(net, testloader, attack=attack, trans=trans_net)  # for t
 测试方法:
 
 ```python
-attack = attack.MI(net, eps=8/255, steps=10, momentum=0.9)
+attack_mi = attack.MI(net, eps=8/255, steps=10, momentum=0.9)
 ```
 
-攻击后图片分类正确率: Accuracy on attacked test images:  **23.08%** 
+攻击后图片分类正确率: Accuracy on attacked test images: **17.64%**
 
 
 
@@ -307,10 +314,10 @@ attack = attack.MI(net, eps=8/255, steps=10, momentum=0.9)
 测试方法:
 
 ```python
-attack = attack.DI(net, eps=8/255, steps=10, prob=0.5)
+attack_di = attack.DI(net, eps=8/255, steps=10, prob=0.5)
 ```
 
-攻击后图片分类正确率: Accuracy on attacked test images:  **24.99%**
+攻击后图片分类正确率: Accuracy on attacked test images:  **18.48%**
 
 
 
@@ -332,10 +339,10 @@ attack = attack.DI(net, eps=8/255, steps=10, prob=0.5)
 测试方法:
 
 ```python
-attack = attack.TI(net, eps=8/255, steps=10, kernlen=15, nsig=3)
+attack_ti = attack.TI(net, eps=8/255, steps=10, kernlen=15, nsig=3)
 ```
 
-攻击后图片分类正确率: Accuracy on attacked test images: **29.81%**
+攻击后图片分类正确率: Accuracy on attacked test images: **28.44%**
 
 
 
@@ -348,25 +355,27 @@ attack = attack.TI(net, eps=8/255, steps=10, kernlen=15, nsig=3)
 
 指定的参数有:
 
-- `net`: 攻击网络, 默认为 `resnet18`
+- `net`: 攻击网络, 默认为 `resnet50`
 - `eps`: 攻击强度, 默认为 8/255
 
 - `model_dict`: 包含 'type', 'arch', 'layer_name', 'input_size' 作为键的字典。
 - `type`: 'vgg', 'resnet', 'densenet', 'alexnet', 'squeezenet' 等模型类型, 默认为 'resnet'
 - `lamb`: $\lambda$, 注意力攻击和交叉熵之间的关系, 默认为1000
-- `yita`: 均方根误差的界限, 默认为None (此时循环次数取决于 `num_iter`)
+- `layer_name`: 最后一个卷积层输出的特征层, 用于 gradcam 提取注意力计算图
 - `alpha`: 步长 (一般 `alpha = eps/num_iter`),  默认为 2/255
-- `num_iter`: 循环次数, 默认为10
+- `steps`: 循环次数, 默认为10
 
-攻击网络: `resnet18`; 测试网络: `resnet101`
+攻击网络: `resnet50`; 测试网络: `resnet101`
 
-测试方法: (运行时间较长)
+测试方法: 
 
 ```python
-attack = attack.AoA(net, eps=8/255, alpha=2, num_iter=4, lamb=1000, yita=None)
+attack_aoa = attack.AoA(net, eps=8/255, alpha=1.6/255, steps=10, lamb=10, layer_name="layer4")
 ```
 
-攻击后图片分类正确率: Accuracy on attacked test images:  75.75%（x）
+攻击后图片分类正确率: Accuracy on attacked test images:  **30.11%**
+
+
 
 
 

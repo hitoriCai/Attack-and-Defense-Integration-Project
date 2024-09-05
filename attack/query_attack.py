@@ -38,8 +38,8 @@ class Square(Attack):
         - labels: :math:`(N)` where each value :math:`y_i` is :math:`0 \leq y_i \leq` `number of labels`.
         - output: :math:`(N, C, H, W)`.
     Examples::
-        >>> attack = attack.Square(model, eps=8/255, n_queries=100, n_restarts=1, p_init=.8, seed=0, verbose=False, loss='margin', resc_schedule=True)
-        >>> adv_images = attack(images, labels)
+        >>> attack_square = attack.Square(model, eps=8/255, n_queries=100, n_restarts=1, p_init=.8, seed=0, verbose=False, loss='margin', resc_schedule=True)
+        >>> adv_images = attack_square(images, labels)
     """
 
     def __init__(
@@ -807,8 +807,8 @@ class QueryAttack():
         num_iter: type=int, default=10000, maximum query times.
         gpu: type=str, default='1', GPU number(s).
     Examples:
-        >>> x_test, y_test, logits_clean, net = attack.get_xylogits(model, testloader)
-        >>> x_adv = attack(net, x_test, y_test, logits_clean) # adv_images after 'iter' queries
+        >>> x_test, y_test, logits_clean, net = attack_query.get_xylogits(model, testloader)
+        >>> x_adv = attack_query(net, x_test, y_test, logits_clean) # adv_images after 'iter' queries
         >>> accuracy = test_query(net, x_adv, y_test, trans)
     """
 

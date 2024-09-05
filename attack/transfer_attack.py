@@ -21,7 +21,7 @@ class MI():
         steps (int): number of steps in PGD. (Default: 10)
         random_start (bool): using random initialization of delta. (Default: True)
     Examples:
-        >>> attack = attack.MI(net, eps=8/255 steps=10, momentum=0.9)
+        >>> attack_mi = attack.MI(net, eps=8/255 steps=10, momentum=0.9)
     """
     def __init__(self, model, eps=8/255, steps=10, momentum=0.9, random_start=True):
         self.eps = eps
@@ -63,8 +63,8 @@ class MI():
 
         return images + delta_x
 
-
-
+        
+        
 # DI (Non-targeted, linf) ##################################################################
 class DI():
     r"""
@@ -82,7 +82,7 @@ class DI():
         image_resize (int): the upper bound of rnd. (Default:224)
         random_start (bool): using random initialization of delta. (Default: True)
     Examples:
-        >>> attack = attack.DI(net, eps=8/255, num_iter=4, steps=10, prob=0.5)
+        >>> attack_di = attack.DI(net, eps=8/255, num_iter=4, steps=10, prob=0.5)
     """
     def __init__(self, model, eps=8/255, steps=10, prob=0.5, image_width=200, image_resize=224, random_start=True):
         self.eps = eps
@@ -161,7 +161,7 @@ class TI():
         nsig (int): range of the Gaussian distribution. (Default: 5)
         random_start (bool): using random initialization of delta. (Default: True)
     Examples:
-        >>> attack = attack.TI(net, eps=8/255, steps=10, kernlen=5, nsig=5)
+        >>> attack_ti = attack.TI(net, eps=8/255, steps=10, kernlen=5, nsig=5)
     """
     def __init__(self, model, eps=8/255, steps=10, kernlen=5, nsig=5, random_start=True):
         self.eps = eps
@@ -232,17 +232,17 @@ class AoA():
     Using grad-cam to calculate the attention map h(x,y)
     Arguments:
         model (nn.Module): model to attack.
-        model_dict (string):  a dictionary that contains 'type', 'arch', layer_name', 'input_size'(optional) as keys.
+        model_dict (string):  a dictionary that contains 'type', 'arch', layer_name', 'input_size' as keys.
         type (string): 'vgg', 'resnet', 'densenet', 'alexnet', 'squeezenet'. (Default: 'resnet')
         eps (float): maximum perturbation. (Default: 8/255)
         lamb (int): a trade-off between the attack on attention and cross entropy. (Default: 1000)
-        yita (int): the bound of Root Mean Squared Error. (Default: None)
-        alpha (float): step size. (alpha = eps/num_iter, Default: 2/255)
+        layer_name (str): 
+        alpha (float): step size. (alpha = eps/num_iter, Default: 1.6/255)
         num_iter (int): number of iterations. (Default: 4)
     Examples:
-        >>> attack = attack.AoA(net, eps=8/255, alpha=2, num_iter=4, lamb=1000)
+        >>> attack_aoa = attack.AoA(net, eps=8/255, alpha=1.6/255, steps=4, lamb=1000, layer_name="layer4")
     """
-    def __init__(self, model, eps=8/255, alpha=2/255, steps=4, lamb=1000, layer_name="layer4"):
+    def __init__(self, model, eps=8/255, alpha=1.6/255, steps=4, lamb=1000, layer_name="layer4"):
         self.eps = eps
         self.model = model
         self.lamb = max(lamb, 1e-4)
