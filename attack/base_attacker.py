@@ -1,5 +1,5 @@
-# 实现接口，接收一个网络，要攻击的数据，采用的损失函数等，返回攻击后的数据，参考torchattack的接口
-# torchattack 里的 attack.py
+# Refering to torchattack 
+# https://pypi.org/project/torchattacks/2.14.2/
 
 import time
 from collections import OrderedDict

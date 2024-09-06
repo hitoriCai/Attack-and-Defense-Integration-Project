@@ -1,3 +1,8 @@
+# Refering to torchattack 
+# https://pypi.org/project/torchattacks/2.14.2/
+# Refering to paper 'Query Attack by Multi-Identity Surrogates'
+# https://github.com/Sizhe-Chen/QueryNet
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function

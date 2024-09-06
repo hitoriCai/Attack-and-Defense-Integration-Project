@@ -1,3 +1,5 @@
+# References are denoted in class introductions
+
 import numpy as np
 import torch
 import torch.nn as nn
