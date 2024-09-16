@@ -419,7 +419,7 @@ model = UniGModel(model=model, module_name='avgpool', head_name='fc',epoch=5, lr
 | :----------: | :------------: | :-------------: |
 |  未防御模型  |     0.783      |      0.422      |
 | AAA防御模型  |     0.783      |      0.670      |
-| UniG防御模型 |                |                 |
+| UniG防御模型 |     0.783      |      0.617      |
 
 
 
