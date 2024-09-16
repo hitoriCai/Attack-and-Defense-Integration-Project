@@ -394,7 +394,7 @@ net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], 
 net = AAALinear(cnn=net, arch="resnet101", device="cuda:0", attractor_interval=4, reverse_step=1, num_iter=100, calibration_loss_weight=5, optimizer_lr=0.1)
 ```
 
-其中，```cnn```为需要包装的网络，``device``指定tensor设备，其余参数保持默认即可。
+其中，``cnn``为需要包装的网络，``device``指定tensor设备，其余参数保持默认即可。
 
 ### 2.2 UniG
 
@@ -406,7 +406,7 @@ net = models.resnet152(pretrained=True)
 net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
 model = UniGModel(model=model, module_name='avgpool', head_name='fc',epoch=5, lr=0.01, delta=0.2, ifcombine=False)
 ```
-
+其中, ``model``为需要包装的网络，``module_name``为插入UniG模块的前一层，``head_name``为网络线性层的名称，``epoch``为训练UniG使用的epoch数量，``lr``为对应学习率，``delta``为UniG模块参数的最大偏移量，``ifcombine``指定是否使用训练数据微调UniG，除前三个参数外，其余参数默认即可。
 
 
 
