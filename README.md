@@ -377,6 +377,41 @@ attack_aoa = attack.AoA(net, eps=8/255, alpha=1.6/255, steps=10, lamb=10, layer_
 
 
 
+### 1.4 投毒攻击
+参考 `attack/poison_attack.py`, 为提高投毒准确率，均采用 targeted-attack.
+
+1. 攻击测试为: 在 `pretrained-resnet50` 上生成攻击图片, 用攻击图片重新训练 `resnet50` 模型，再测试干净样本上的准确率:
+
+```python
+net = models.resnet50(pretrained=True)
+trans_net = models.resnet101(pretrained=True)   # for transferability
+net = ProcessedModel(net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])).to(device)
+trans_net = ProcessedModel(trans_net, NormalizeByChannelMeanStd(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])).to(device)
+```
+**AdvPosion攻击:**
+参考代码：[Adversarial Examples Make Strong Poisons](https://github.com/lhfowl/adversarial_poisons)
+
+指定的参数有:
+
+- `net`: 攻击网络, 默认为 `resnet50`
+- `eps`: 攻击强度, 默认为 8/255
+
+- `alpha`: 步长(一般 `alpha = eps*2/steps`)
+- `steps`: 循环次数, 默认为10
+
+- `prob`: 变换概率, 默认值为 0.5
+- `image_width`: 随机数的下界, 默认为 200
+- `image_resize`: 随机数的上界, 默认为 224
+
+- `random_start`: 是否使用delta的随机初始化, 默认为True
+
+测试方法:
+
+```python
+attack_di = attack.PoisonAttack(net, eps=8/255, steps=10, prob=0.5)
+```
+
+攻击后图片分类正确率: Accuracy on attacked test images:  **xxx**
 
 
 ## 2. 防御方法
