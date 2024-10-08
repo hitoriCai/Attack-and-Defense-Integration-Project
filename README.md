@@ -381,6 +381,7 @@ attack_aoa = attack.AoA(net, eps=8/255, alpha=1.6/255, steps=10, lamb=10, layer_
 参考 `attack/adversarial_poisons/`文件夹, 为提高投毒准确率，均采用 targeted-attack.
 
 1. 生成投毒样本
+
 **AdvPosion攻击:**
 参考代码：[Adversarial Examples Make Strong Poisons](https://github.com/lhfowl/adversarial_poisons)
 ```python
