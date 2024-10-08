@@ -385,7 +385,7 @@ attack_aoa = attack.AoA(net, eps=8/255, alpha=1.6/255, steps=10, lamb=10, layer_
 **AdvPosion攻击:**
 参考代码：[Adversarial Examples Make Strong Poisons](https://github.com/lhfowl/adversarial_poisons)
 ```python
-bash generate_cifar10.sh # CIFAR10
+bash generate_cifar10.sh #CIFAR10
 bash generate_imagenet.sh #ImageNet
 ```
 
@@ -394,7 +394,7 @@ bash generate_imagenet.sh #ImageNet
 bash test.sh
 ```
 
-投毒后在干净样本上的图片分类正确率: **7.36%**（CIFAR10）
+投毒后在CIFAR10,ResNet18上干净样本的图片分类正确率: **8.69%**
 
 
 ## 2. 防御方法
